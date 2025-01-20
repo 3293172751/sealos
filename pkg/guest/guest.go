@@ -15,96 +15,90 @@
 package guest
 
 import (
-	"fmt"
-	"path/filepath"
+	"context"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/labring/sealos/fork/golang/expansion"
-	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/env"
-	"github.com/labring/sealos/pkg/runtime"
+	"github.com/labring/sealos/pkg/exec"
 	"github.com/labring/sealos/pkg/ssh"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
-	fileutil "github.com/labring/sealos/pkg/utils/file"
-	"github.com/labring/sealos/pkg/utils/logger"
 	"github.com/labring/sealos/pkg/utils/maps"
+	stringsutil "github.com/labring/sealos/pkg/utils/strings"
 )
 
 type Interface interface {
-	Apply(cluster *v2.Cluster, mounts []v2.MountImage) error
+	Apply(cluster *v2.Cluster, mounts []v2.MountImage, targetHosts []string) error
 	Delete(cluster *v2.Cluster) error
 }
 
-type Default struct {
-}
+type Default struct{}
 
 func NewGuestManager() (Interface, error) {
 	return &Default{}, nil
 }
 
-func (d *Default) Apply(cluster *v2.Cluster, mounts []v2.MountImage) error {
-	envInterface := env.NewEnvProcessor(cluster, cluster.Status.Mounts)
-	envs := envInterface.WrapperEnv(cluster.GetMaster0IP()) //clusterfile
-	guestCMD := d.getGuestCmd(envs, cluster, mounts)
-
-	kubeConfig := filepath.Join(constants.GetHomeDir(), ".kube", "config")
-	if !fileutil.IsExist(kubeConfig) {
-		adminFile := runtime.GetConstantData(cluster.Name).AdminFile()
-		data, err := fileutil.ReadAll(adminFile)
-		if err != nil {
-			return fmt.Errorf("read admin.conf error in guest: %w", err)
-		}
-		master0IP := cluster.GetMaster0IP()
-		outData := strings.ReplaceAll(string(data), runtime.DefaultAPIServerDomain, master0IP)
-		if err = fileutil.WriteFile(kubeConfig, []byte(outData)); err != nil {
-			return err
-		}
-		defer func() {
-			_ = fileutil.CleanFiles(kubeConfig)
-		}()
-	}
-	sshInterface := ssh.NewSSHClient(&cluster.Spec.SSH, true)
-	logger.Debug("start to exec guest commands")
-	if err := sshInterface.CmdAsync(cluster.GetMaster0IPAndPort(), guestCMD...); err != nil {
+func (d *Default) Apply(cluster *v2.Cluster, mounts []v2.MountImage, targetHosts []string) error {
+	envGetter := env.NewEnvProcessor(cluster)
+	sshClient := ssh.NewCacheClientFromCluster(cluster, true)
+	execer, err := exec.New(sshClient)
+	if err != nil {
 		return err
 	}
-	logger.Debug("finish to exec guest commands: %v", guestCMD)
+
+	for i, m := range mounts {
+		switch {
+		case m.IsRootFs(), m.IsPatch():
+			eg, ctx := errgroup.WithContext(context.Background())
+			for j := range targetHosts {
+				node := targetHosts[j]
+				envs := maps.Merge(m.Env, envGetter.Getenv(node))
+				cmds := formalizeImageCommands(cluster, i, m, envs)
+				eg.Go(func() error {
+					return execer.CmdAsyncWithContext(ctx, node,
+						stringsutil.RenderShellWithEnv(strings.Join(cmds, "; "), envs),
+					)
+				})
+			}
+			if err := eg.Wait(); err != nil {
+				return err
+			}
+		case m.IsApplication():
+			// on run on the first master
+			envs := maps.Merge(m.Env, envGetter.Getenv(cluster.GetMaster0IP()))
+			cmds := formalizeImageCommands(cluster, i, m, envs)
+			if err := execer.CmdAsync(cluster.GetMaster0IPAndPort(),
+				stringsutil.RenderShellWithEnv(strings.Join(cmds, "; "), envs),
+			); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
-func (d *Default) getGuestCmd(envs map[string]string, cluster *v2.Cluster, mounts []v2.MountImage) []string {
-	command := make([]string, 0)
-	overrideCmd := cluster.Spec.Command
-	workCmd := func(applicationName, cmd string, t v2.ImageType) string {
-		if t == v2.RootfsImage {
-			return fmt.Sprintf(constants.CdAndExecCmd, constants.GetRootWorkDir(cluster.Name), cmd)
-		}
-		return fmt.Sprintf(constants.CdAndExecCmd, constants.GetAppWorkDir(cluster.Name, applicationName), cmd)
+func formalizeImageCommands(cluster *v2.Cluster, index int, m v2.MountImage, extraEnvs map[string]string) []string {
+	envs := maps.Merge(m.Env, extraEnvs)
+	envs = v2.MergeEnvWithBuiltinKeys(envs, m)
+	mapping := expansion.MappingFuncFor(envs)
+
+	cmds := make([]string, 0)
+	for i := range m.Entrypoint {
+		cmds = append(cmds, FormalizeWorkingCommand(cluster.Name, m.Name, m.Type, expansion.Expand(m.Entrypoint[i], mapping)))
 	}
-	for idx, i := range mounts {
-		if i.Type != v2.AppImage && i.Type != v2.RootfsImage {
-			continue
+	if index == 0 && len(cluster.Spec.Command) > 0 {
+		for i := range cluster.Spec.Command {
+			cmds = append(cmds, FormalizeWorkingCommand(cluster.Name, m.Name, m.Type, expansion.Expand(cluster.Spec.Command[i], mapping)))
 		}
-		mergeENV := maps.MergeMap(i.Env, envs)
-		mapping := expansion.MappingFuncFor(mergeENV)
-		for _, cmd := range i.Entrypoint {
-			command = append(command, workCmd(i.Name, expansion.Expand(cmd, mapping), i.Type))
-		}
-
-		// if --cmd is specified, only the CMD of the first MountImage will be overridden
-		if idx == 0 && len(overrideCmd) > 0 {
-			for _, cmd := range overrideCmd {
-				command = append(command, workCmd(i.Name, expansion.Expand(cmd, mapping), i.Type))
-			}
-			continue
-		}
-
-		for _, cmd := range i.Cmd {
-			command = append(command, workCmd(i.Name, expansion.Expand(cmd, mapping), i.Type))
+	} else {
+		for i := range m.Cmd {
+			cmds = append(cmds, FormalizeWorkingCommand(cluster.Name, m.Name, m.Type, expansion.Expand(m.Cmd[i], mapping)))
 		}
 	}
 
-	return command
+	return cmds
 }
 
 func (d Default) Delete(_ *v2.Cluster) error {

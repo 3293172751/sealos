@@ -22,3 +22,48 @@ export type Session = {
 const sessionKey = 'session';
 
 export { sessionKey };
+
+export type userPriceType = {
+  cpu: number;
+  memory: number;
+  storage: number;
+  gpu?: { alias: string; type: string; price: number; inventory: number; vm: number }[];
+};
+
+export type UserQuotaItemType = {
+  type: 'cpu' | 'memory' | 'storage' | 'gpu';
+  used: number;
+  limit: number;
+};
+
+export type AccountCRD = {
+  apiVersion: string;
+  kind: string;
+  metadata: {
+    annotations: Record<string, string>;
+    creationTimestamp: string;
+    generation: number;
+  };
+  status: {
+    activityBonus: number;
+    balance: number;
+    deductionBalance: number;
+    encryptBalance: string;
+    encryptDeductionBalance: string;
+  };
+};
+
+export enum TaskType {
+  LAUNCHPAD = 'LAUNCHPAD'
+}
+
+export type UserTask = {
+  id: string;
+  title: string;
+  description: string;
+  reward: string;
+  order: number;
+  taskType: TaskType;
+  isCompleted: boolean;
+  completedAt: string;
+};

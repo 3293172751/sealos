@@ -16,96 +16,76 @@ package buildah
 
 import (
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/labring/sreg/pkg/registry/crane"
+	"github.com/labring/sreg/pkg/registry/save"
+
 	"github.com/containerd/containerd/platforms"
 	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/storage/pkg/archive"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/labring/sealos/pkg/buildimage"
+	"github.com/labring/sreg/pkg/buildimage"
+
 	"github.com/labring/sealos/pkg/constants"
-	"github.com/labring/sealos/pkg/registry"
-	"github.com/labring/sealos/pkg/utils/file"
-	"github.com/labring/sealos/pkg/utils/flags"
 	"github.com/labring/sealos/pkg/utils/logger"
-	"github.com/labring/sealos/pkg/utils/rand"
 )
 
-type saveOptions struct {
+type saverOptions struct {
 	maxPullProcs int
 	enabled      bool
-	compression  flags.Compression
 }
 
-func (opts *saveOptions) RegisterFlags(fs *pflag.FlagSet) {
+func (opts *saverOptions) RegisterFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&opts.maxPullProcs, "max-pull-procs", 5, "maximum number of goroutines for pulling")
 	fs.BoolVar(&opts.enabled, "save-image", true, "store images that parsed from the specific directories")
-	fs.Var(&opts.compression, "compression", "compression algorithm, which effect the images stored in the registry dir")
 }
 
-func runSaveImages(contextDir string, platforms []v1.Platform, sys *types.SystemContext, opts *saveOptions) error {
+func runSaveImages(contextDir string, platforms []v1.Platform, sys *types.SystemContext, opts *saverOptions) error {
 	if !opts.enabled {
 		logger.Warn("save-image is disabled, skip pulling images")
 		return nil
 	}
 	registryDir := filepath.Join(contextDir, constants.RegistryDirName)
-	compress := func() error {
-		path := filepath.Join(registryDir, "docker")
-		if file.IsExist(path) && opts.compression != flags.Disable {
-			compression := opts.compression.Compression()
-			target := filepath.Join(registryDir, "compressed",
-				"compressed-"+rand.Generator(8)+"."+compression.Extension())
-			logger.Debug("trying to compress dir %s into archive %s", path, target)
-			if err := file.MkDirs(filepath.Dir(target)); err != nil {
-				return err
-			}
-			fp, err := os.Create(target)
-			if err != nil {
-				return err
-			}
-			defer fp.Close()
-			rc, err := archive.Tar(path, compression)
-			if err != nil {
-				return err
-			}
-			defer rc.Close()
-			if _, err = io.Copy(fp, rc); err != nil {
-				return err
-			}
-			return os.RemoveAll(path)
-		}
-		return nil
-	}
 	images, err := buildimage.List(contextDir)
 	if err != nil {
 		return err
 	}
-	if len(images) == 0 {
-		return compress()
-	}
-	auths, err := registry.GetAuthInfo(sys)
+	tars, err := buildimage.TarList(contextDir)
 	if err != nil {
 		return err
 	}
-	is := registry.NewImageSaver(getContext(), opts.maxPullProcs, auths)
-
-	for _, pf := range platforms {
-		logger.Debug("pull images %v for platform %s", images, strings.Join([]string{pf.OS, pf.Architecture}, "/"))
-		images, err = is.SaveImages(images, registryDir, pf)
-		if err != nil {
-			return fmt.Errorf("failed to save images: %w", err)
-		}
-		logger.Info("saving images %s", strings.Join(images, ", "))
+	if len(images) == 0 && len(tars) == 0 {
+		return nil
 	}
-	return compress()
+	auths, err := crane.GetAuthInfo(sys)
+	if err != nil {
+		return err
+	}
+	is := save.NewImageSaver(getContext(), opts.maxPullProcs, auths)
+	isTar := save.NewImageTarSaver(getContext(), opts.maxPullProcs)
+	for _, pf := range platforms {
+		if len(images) != 0 {
+			images, err = is.SaveImages(images, registryDir, pf)
+			if err != nil {
+				return fmt.Errorf("failed to save images: %w", err)
+			}
+			logger.Info("saving images %s", strings.Join(images, ", "))
+		}
+		if len(tars) != 0 {
+			tars, err = isTar.SaveImages(tars, registryDir, pf)
+			if err != nil {
+				return fmt.Errorf("failed to save tar images: %w", err)
+			}
+			logger.Info("saving tar images %s", strings.Join(tars, ", "))
+		}
+	}
+	return nil
 }
 
 func parsePlatforms(c *cobra.Command) ([]v1.Platform, error) {

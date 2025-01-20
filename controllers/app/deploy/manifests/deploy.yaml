@@ -1,3 +1,17 @@
+# Copyright © 2023 sealos.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -15,8 +29,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.9.2
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.13.0
   name: apps.app.sealos.io
 spec:
   group: app.sealos.io
@@ -54,17 +67,57 @@ spec:
                   url:
                     type: string
                 type: object
+              displayType:
+                enum:
+                - normal
+                - more
+                - hidden
+                type: string
+              i18n:
+                additionalProperties:
+                  description: AppMeta Base Information
+                  properties:
+                    data:
+                      properties:
+                        desc:
+                          type: string
+                        url:
+                          type: string
+                      type: object
+                    displayType:
+                      enum:
+                      - normal
+                      - more
+                      - hidden
+                      type: string
+                    icon:
+                      type: string
+                    menuData:
+                      items:
+                        properties:
+                          link:
+                            type: string
+                          name:
+                            type: string
+                        type: object
+                      type: array
+                    name:
+                      type: string
+                    type:
+                      type: string
+                  type: object
+                type: object
               icon:
                 type: string
               menuData:
-                properties:
-                  helpDocs:
-                    type: string
-                  helpDropDown:
-                    type: boolean
-                  nameColor:
-                    type: string
-                type: object
+                items:
+                  properties:
+                    link:
+                      type: string
+                    name:
+                      type: string
+                  type: object
+                type: array
               name:
                 type: string
               type:
@@ -79,13 +132,213 @@ spec:
     subresources:
       status: {}
 ---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+  name: instances.app.sealos.io
+spec:
+  group: app.sealos.io
+  names:
+    kind: Instance
+    listKind: InstanceList
+    plural: instances
+    singular: instance
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: Instance is the Schema for the instances API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: InstanceSpec defines the desired state of Instance
+            properties:
+              author:
+                type: string
+              categories:
+                items:
+                  type: string
+                type: array
+              defaults:
+                additionalProperties:
+                  properties:
+                    type:
+                      type: string
+                    value:
+                      type: string
+                  required:
+                  - type
+                  - value
+                  type: object
+                type: object
+              description:
+                type: string
+              draft:
+                type: boolean
+              gitRepo:
+                type: string
+              icon:
+                type: string
+              inputs:
+                additionalProperties:
+                  properties:
+                    default:
+                      type: string
+                    description:
+                      type: string
+                    required:
+                      type: boolean
+                    type:
+                      type: string
+                  required:
+                  - type
+                  type: object
+                type: object
+              readme:
+                type: string
+              templateType:
+                type: string
+              title:
+                type: string
+              url:
+                type: string
+            required:
+            - templateType
+            - title
+            type: object
+            x-kubernetes-validations:
+            - message: defaults must have app_name key
+              rule: '''app_name'' in self.defaults'
+          status:
+            description: InstanceStatus defines the observed state of Instance
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+  name: templates.app.sealos.io
+spec:
+  group: app.sealos.io
+  names:
+    kind: Template
+    listKind: TemplateList
+    plural: templates
+    singular: template
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: Template is the Schema for the templates API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TemplateSpec defines the desired state of Template
+            properties:
+              author:
+                type: string
+              categories:
+                items:
+                  type: string
+                type: array
+              defaults:
+                additionalProperties:
+                  properties:
+                    type:
+                      type: string
+                    value:
+                      type: string
+                  required:
+                  - type
+                  - value
+                  type: object
+                type: object
+              description:
+                type: string
+              draft:
+                type: boolean
+              gitRepo:
+                type: string
+              icon:
+                type: string
+              inputs:
+                additionalProperties:
+                  properties:
+                    default:
+                      type: string
+                    description:
+                      type: string
+                    required:
+                      type: boolean
+                    type:
+                      type: string
+                  required:
+                  - type
+                  type: object
+                type: object
+              readme:
+                type: string
+              templateType:
+                type: string
+              title:
+                type: string
+              url:
+                type: string
+            required:
+            - templateType
+            - title
+            type: object
+            x-kubernetes-validations:
+            - message: defaults must have app_name key
+              rule: '''app_name'' in self.defaults'
+          status:
+            description: TemplateStatus defines the observed state of Template
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   labels:
-    app.kuberentes.io/instance: controller-manager
     app.kubernetes.io/component: rbac
     app.kubernetes.io/created-by: app
+    app.kubernetes.io/instance: controller-manager-sa
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: serviceaccount
     app.kubernetes.io/part-of: app
@@ -140,7 +393,6 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  creationTimestamp: null
   name: app-manager-role
 rules:
 - apiGroups:
@@ -158,17 +410,27 @@ rules:
 - apiGroups:
   - app.sealos.io
   resources:
-  - apps/finalizers
+  - instances
   verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
   - update
+  - watch
 - apiGroups:
   - app.sealos.io
   resources:
-  - apps/status
+  - templates
   verbs:
+  - create
+  - delete
   - get
+  - list
   - patch
   - update
+  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -309,7 +571,7 @@ metadata:
   name: app-controller-manager
   namespace: app-system
 spec:
-  replicas: 0
+  replicas: 1
   selector:
     matchLabels:
       control-plane: controller-manager
@@ -320,29 +582,13 @@ spec:
       labels:
         control-plane: controller-manager
     spec:
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: kubernetes.io/arch
-                operator: In
-                values:
-                - amd64
-                - arm64
-                - ppc64le
-                - s390x
-              - key: kubernetes.io/os
-                operator: In
-                values:
-                - linux
       containers:
       - args:
         - --secure-listen-address=0.0.0.0:8443
         - --upstream=http://127.0.0.1:8080/
         - --logtostderr=true
         - --v=0
-        image: gcr.io/kubebuilder/kube-rbac-proxy:v0.13.0
+        image: gcr.io/kubebuilder/kube-rbac-proxy:v0.14.1
         name: kube-rbac-proxy
         ports:
         - containerPort: 8443
@@ -366,7 +612,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: ghcr.io/labring/sealos-app-controller:dev
+        image: ghcr.io/labring/sealos-app-controller:latest
         livenessProbe:
           httpGet:
             path: /healthz
@@ -396,3 +642,15 @@ spec:
         runAsNonRoot: true
       serviceAccountName: app-controller-manager
       terminationGracePeriodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: "control-plane"
+                      operator: In
+                      values:
+                        - controller-manager
+                topologyKey: "kubernetes.io/hostname"

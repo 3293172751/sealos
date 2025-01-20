@@ -16,22 +16,22 @@ package confirm
 
 import (
 	"errors"
-	"fmt"
-	"regexp"
+	"os"
 
 	"github.com/manifoldco/promptui"
+
+	"github.com/labring/sealos/pkg/utils/logger"
 )
 
 // Confirm is send the prompt and get result
 func Confirm(prompt, cancel string) (bool, error) {
-	var yesRx = regexp.MustCompile("^(?:y(?:es)?)$")
-	var noRx = regexp.MustCompile("^(?:n(?:o)?)$")
-	promptLabel := "Yes [y/yes], No [n/no]"
-	fmt.Println(prompt)
+	var hostname, _ = os.Hostname()
+	promptLabel := "Do you want to continue on '" + hostname + "' cluster? Input '" + hostname + "' to continue"
+	logger.Info(prompt)
 
 	validate := func(input string) error {
-		if !yesRx.MatchString(input) && !noRx.MatchString(input) {
-			return errors.New("invalid input, please enter 'y', 'yes', 'n', or 'no'")
+		if input != hostname {
+			return errors.New("invalid input, please enter " + hostname + " to continue")
 		}
 		return nil
 	}
@@ -46,9 +46,73 @@ func Confirm(prompt, cancel string) (bool, error) {
 		return false, err
 	}
 
-	if yesRx.MatchString(result) {
+	if result == hostname {
 		return true, nil
 	}
-	fmt.Println(cancel)
+	logger.Warn(cancel)
 	return false, nil
+}
+
+func PasswordInput(promptInput string) string {
+	validate := func(input string) error {
+		if len(input) < 6 {
+			return errors.New("password must have more than 6 characters")
+		}
+		return nil
+	}
+	if promptInput == "" {
+		promptInput = "Please input password"
+	}
+	prompt := promptui.Prompt{
+		Label:    promptInput,
+		Validate: validate,
+		Mask:     '*',
+	}
+
+	result, err := prompt.Run()
+
+	if err != nil {
+		logger.Error("Prompt failed %v\n", err)
+		return ""
+	}
+
+	return result
+}
+
+func SelectInput(promptInput string, items []string) string {
+	if promptInput == "" {
+		promptInput = "Please select"
+	}
+	if len(items) == 0 {
+		logger.Error("select items is empty")
+		return ""
+	}
+	prompt := promptui.Select{
+		Label: promptInput,
+		Items: items,
+	}
+
+	_, result, err := prompt.Run()
+
+	if err != nil {
+		logger.Error("Prompt failed %v\n", err)
+		return ""
+	}
+
+	return result
+}
+
+func Input(promptInput, defaultValue string, validate func(input string) error) string {
+	prompt := promptui.Prompt{
+		Label:    promptInput,
+		Validate: validate,
+		Default:  defaultValue,
+	}
+
+	result, err := prompt.Run()
+	if err != nil {
+		logger.Error("Prompt failed %v\n", err)
+		return ""
+	}
+	return result
 }

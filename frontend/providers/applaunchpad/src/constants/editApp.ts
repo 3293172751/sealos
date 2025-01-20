@@ -1,40 +1,48 @@
 import type { AppEditType } from '@/types/app';
+import { customAlphabet } from 'nanoid';
+const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz', 12);
 
 export const editModeMap = (isEdit: boolean) => {
   if (isEdit) {
     return {
-      title: '变更应用',
-      applyBtnText: '更新应用',
-      applyMessage: '确认更新应用?',
-      applySuccess: '更新成功',
-      applyError: '更新失败'
+      title: 'Update Application',
+      applyBtnText: 'Update',
+      applyMessage: 'Confirm Update Application?',
+      applySuccess: 'Update Successful',
+      applyError: 'Update Failed'
     };
   }
 
   return {
-    title: '应用部署',
-    applyBtnText: '部署应用',
-    applyMessage: '确认部署应用?',
-    applySuccess: '部署成功',
-    applyError: '部署失败'
+    title: 'Application Deployment',
+    applyBtnText: 'Deploy Application',
+    applyMessage: 'Confirm Deploy Application?',
+    applySuccess: 'Deployment Successful',
+    applyError: 'Deployment Failed'
   };
 };
 
 export const defaultEditVal: AppEditType = {
+  kind: 'deployment',
   appName: 'hello-world',
   imageName: 'nginx',
   runCMD: '',
   cmdParam: '',
   replicas: 1,
-  cpu: 100,
-  memory: 64,
-  containerOutPort: 80,
-  accessExternal: {
-    use: false,
-    backendProtocol: 'HTTP',
-    outDomain: '',
-    selfDomain: ''
-  },
+  cpu: 200,
+  memory: 256,
+  networks: [
+    {
+      networkName: '',
+      portName: nanoid(),
+      port: 80,
+      protocol: 'HTTP',
+      openPublicDomain: false,
+      publicDomain: '',
+      customDomain: '',
+      domain: ''
+    }
+  ],
   envs: [],
   hpa: {
     use: false,
@@ -50,29 +58,24 @@ export const defaultEditVal: AppEditType = {
     password: '',
     serverAddress: 'docker.io'
   },
-  storeList: []
+  storeList: [],
+  volumes: [],
+  volumeMounts: [],
+  gpu: {
+    manufacturers: 'nvidia',
+    type: '',
+    amount: 1
+  },
+  labels: {}
 };
 
-export const CpuSlideMarkList = [
-  // The unit of value is m
-  { label: 0.1, value: 100 },
-  { label: 0.2, value: 200 },
-  { label: 0.5, value: 500 },
-  { label: 1, value: 1000 },
-  { label: 2, value: 2000 },
-  { label: 3, value: 3000 },
-  { label: 4, value: 4000 },
-  { label: 8, value: 8000 }
-];
-
-export const MemorySlideMarkList = [
-  { label: '64Mi', value: 64 },
-  { label: '128Mi', value: 128 },
-  { label: '256Mi', value: 256 },
-  { label: '512Mi', value: 512 },
-  { label: '1G', value: 1024 },
-  { label: '2G', value: 2048 },
-  { label: '4G', value: 4096 },
-  { label: '8G', value: 8192 },
-  { label: '16G', value: 16384 }
+export const GpuAmountMarkList = [
+  { label: '1', value: 1 },
+  { label: '2', value: 2 },
+  { label: '3', value: 3 },
+  { label: '4', value: 4 },
+  { label: '5', value: 5 },
+  { label: '6', value: 6 },
+  { label: '7', value: 7 },
+  { label: '8', value: 8 }
 ];

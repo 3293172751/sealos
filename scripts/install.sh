@@ -23,16 +23,13 @@ set -o noglob
 FILE_NAME=sealos
 BIN_DIR=/usr/bin
 # --- helper functions for logs ---
-info()
-{
+info() {
     echo '[INFO] ' "$@"
 }
-warn()
-{
+warn() {
     echo '[WARN] ' "$@" >&2
 }
-fatal()
-{
+fatal() {
     echo '[ERROR] ' "$@" >&2
     exit 1
 }
@@ -40,18 +37,14 @@ fatal()
 # --- ensures $SEALOS_URL is empty or begins with https://, exiting fatally otherwise ---
 verify_url() {
     case "${SEALOS_URL}" in
-        "")
-            ;;
-        https://*)
-            ;;
-        http://*)
-            ;;
-        *)
-            fatal "Only https:// URLs are supported for SEALOS_URL (have ${SEALOS_URL})"
-            ;;
+    "") ;;
+    https://*) ;;
+    http://*) ;;
+    *)
+        fatal "Only https:// URLs are supported for SEALOS_URL (have ${SEALOS_URL})"
+        ;;
     esac
 }
-
 
 # --- verify an executable sealos binary is installed ---
 verify_is_executable() {
@@ -66,24 +59,17 @@ setup_verify_arch() {
         ARCH=$(uname -m)
     fi
     case $ARCH in
-        amd64)
-            ARCH=amd64
-            SUFFIX=
-            ;;
-        x86_64)
-            ARCH=amd64
-            SUFFIX=
-            ;;
-        arm64)
-            ARCH=arm64
-            SUFFIX=-${ARCH}
-            ;;
-        aarch64)
-            ARCH=arm64
-            SUFFIX=-${ARCH}
-            ;;
-        *)
-            fatal "Unsupported architecture $ARCH"
+    amd64 | x86_64)
+        ARCH=amd64
+        SUFFIX=
+        ;;
+    arm64 | aarch64)
+        ARCH=arm64
+        SUFFIX=-${ARCH}
+        ;;
+    *)
+        fatal "Unsupported architecture $ARCH"
+        ;;
     esac
 }
 
@@ -94,12 +80,19 @@ verify_downloader() {
     DOWNLOADER=$1
     # Set verified executable as our downloader program and return success
     DOWNLOADER_PREFIX=https://github.com/${OWN_REPO}/releases/download/
+    if [ -n "$PROXY_PREFIX" ]; then
+        DOWNLOADER_PREFIX="${PROXY_PREFIX%/}/${DOWNLOADER_PREFIX}"
+    fi
     DOWNLOADER_URL=${DOWNLOADER_PREFIX}${VERSION}/${FILE_NAME}_${VERSION##v}_linux_${ARCH}.tar.gz
     return 0
 }
 
 get_release_version() {
     VERSION=$1
+    # If the incoming version number is latest, get the latest version number from github
+    if [ "$VERSION" = "latest" ]; then
+        VERSION=$(curl -s https://api.github.com/repos/${OWN_REPO}/releases/latest | grep tag_name | cut -d '"' -f 4)
+    fi
     info "Using ${VERSION} as release"
     OWN_REPO=$2
     if [ -z "$OWN_REPO" ]; then
@@ -114,19 +107,19 @@ download() {
     [ $# -eq 2 ] || fatal 'download needs exactly 2 arguments'
     info "Downloading sealos, waiting..."
     case $DOWNLOADER in
-        curl)
-            curl -o $1 -sfL $2
-            ;;
-        wget)
-            wget -qO $1 $2
-            ;;
-        *)
-            fatal "Incorrect executable '$DOWNLOADER'"
-            ;;
+    curl)
+        status_code=$(curl -L "$2" -o "$1" --progress-bar -w "%{http_code}\n") || fatal 'Download failed'
+        if [ "$status_code" != "200" ]; then
+            fatal "Download failed, status code: $status_code"
+        fi
+        ;;
+    wget)
+        wget -qO $1 $2 || fatal 'Download failed'
+        ;;
+    *)
+        fatal "Incorrect executable '$DOWNLOADER'"
+        ;;
     esac
-
-    # Abort if download command failed
-    [ $? -eq 0 ] || fatal 'Download failed'
 }
 
 # --- download binary from github url ---
@@ -151,15 +144,9 @@ setup_tmp() {
     }
     trap cleanup INT EXIT
 }
+
 cleanup_tmp() {
     rm -rf ${TMP_DIR}
-}
-cleanup() {
-        code=$?
-        set +e
-        trap - EXIT
-        rm -rf ${TMP_DIR}
-        exit $code
 }
 
 # --- setup permissions and move binary to system directory ---
@@ -173,10 +160,11 @@ setup_binary() {
     sudo mv -f ${TMP_BIN} ${BIN_DIR}/${FILE_NAME}
 
 }
+
 verify_binary() {
-    ${FILE_NAME} version
-    [ $? -eq 0 ] || fatal 'Download failed'
+    ${FILE_NAME} version || fatal 'failed to verify binary'
 }
+
 # --- run the install process --
 {
     setup_verify_arch

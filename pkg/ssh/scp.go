@@ -20,18 +20,14 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/labring/sealos/pkg/system"
 
 	"github.com/pkg/sftp"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/labring/sealos/pkg/utils/file"
-	"github.com/labring/sealos/pkg/utils/hash"
 	"github.com/labring/sealos/pkg/utils/logger"
 	"github.com/labring/sealos/pkg/utils/progress"
 )
@@ -64,12 +60,36 @@ func (c *Client) CmdToString(host, cmd, sep string) (string, error) {
 }
 
 func (c *Client) newClientAndSftpClient(host string) (*ssh.Client, *sftp.Client, error) {
-	sshClient, err := c.connect(host)
+	var (
+		sshClient  *ssh.Client
+		sftpClient *sftp.Client
+		err        error
+	)
+
+	hostsClientMap.Mux.Lock()
+	defer hostsClientMap.Mux.Unlock()
+	if hc, ok := hostsClientMap.ClientMap[host]; ok {
+		return hc.SSHClient, hc.SftpClient, err
+	}
+	sshClient, err = c.connect(host)
 	if err != nil {
 		return nil, nil, err
 	}
 	// create sftp client
-	sftpClient, err := sftp.NewClient(sshClient)
+	if c.Option.sudo || c.Option.user != defaultUsername {
+		sftpClient, err = NewSudoSftpClient(sshClient, c.password)
+	} else {
+		sftpClient, err = sftp.NewClient(sshClient)
+	}
+
+	if err == nil {
+		hc := HostClient{
+			SSHClient:  sshClient,
+			SftpClient: sftpClient,
+		}
+		hostsClientMap.ClientMap[host] = hc
+	}
+
 	return sshClient, sftpClient, err
 }
 
@@ -83,19 +103,11 @@ func (c *Client) sftpConnect(host string) (sshClient *ssh.Client, sftpClient *sf
 
 // Copy is copy file or dir to remotePath, add md5 validate
 func (c *Client) Copy(host, localPath, remotePath string) error {
-	if c.isLocalAction(host) {
-		logger.Debug("local %s copy files src %s to dst %s", host, localPath, remotePath)
-		return file.RecursionCopy(localPath, remotePath)
-	}
 	logger.Debug("remote copy files src %s to dst %s", localPath, remotePath)
-	sshClient, sftpClient, err := c.sftpConnect(host)
+	_, sftpClient, err := c.sftpConnect(host)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %s", err)
 	}
-	defer func() {
-		_ = sftpClient.Close()
-		_ = sshClient.Close()
-	}()
 
 	f, err := os.Stat(localPath)
 	if err != nil {
@@ -131,19 +143,11 @@ func (c *Client) Copy(host, localPath, remotePath string) error {
 }
 
 func (c *Client) Fetch(host, src, dst string) error {
-	if c.isLocalAction(host) {
-		return file.RecursionCopy(src, dst)
-	}
-
 	logger.Debug("fetch remote file %s to %s", src, dst)
-	sshClient, sftpClient, err := c.sftpConnect(host)
+	_, sftpClient, err := c.sftpConnect(host)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %s", err)
 	}
-	defer func() {
-		_ = sftpClient.Close()
-		_ = sshClient.Close()
-	}()
 
 	rfp, err := sftpClient.Open(src)
 	if err != nil {
@@ -167,7 +171,7 @@ func (c *Client) Fetch(host, src, dst string) error {
 		return err
 	}
 	defer created.Close()
-	_, err = io.Copy(rfp, created)
+	_, err = io.Copy(created, rfp)
 	return err
 }
 
@@ -190,68 +194,36 @@ func (c *Client) doCopy(client *sftp.Client, host, src, dest string, epu *progre
 			}
 		}
 	} else {
-		fn := func(host string, name string) bool {
-			exists, err := checkIfRemoteFileExists(client, name)
-			if err != nil {
-				logger.Error("failed to detect remote file exists: %v", err)
-			}
-			return exists
-		}
-		if isCheckFileMD5() && fn(host, dest) {
-			rfp, _ := client.Stat(dest)
-			if lfp.Size() == rfp.Size() && hash.FileDigest(src) == c.RemoteSha256Sum(host, dest) {
-				logger.Debug("remote dst %s already exists and is the latest version, skip copying process", dest)
-				return nil
-			}
-		}
 		lf, err := os.Open(filepath.Clean(src))
 		if err != nil {
 			return fmt.Errorf("failed to open: %v", err)
 		}
 		defer lf.Close()
 
-		dstfp, err := client.Create(dest)
-		if err != nil {
-			return fmt.Errorf("failed to create: %v", err)
-		}
-		if err = dstfp.Chmod(lfp.Mode()); err != nil {
-			return fmt.Errorf("failed to Chmod dst: %v", err)
-		}
-		defer dstfp.Close()
-		if _, err = io.Copy(dstfp, lf); err != nil {
-			return fmt.Errorf("failed to Copy: %v", err)
-		}
-		if isCheckFileMD5() {
-			dh := c.RemoteSha256Sum(host, dest)
-			if dh == "" {
-				// when ssh connection failed, remote sha256 is default to "", so ignore it.
-				return nil
+		destTmp := dest + ".tmp"
+		if err = func(tmpName string) error {
+			dstfp, err := client.Create(tmpName)
+			if err != nil {
+				return fmt.Errorf("failed to create: %v", err)
 			}
-			sh := hash.FileDigest(src)
-			if sh != dh {
-				return fmt.Errorf("sha256 sum not match %s(%s) != %s(%s), maybe network corruption?", src, sh, dest, dh)
+			defer dstfp.Close()
+
+			if err = dstfp.Chmod(lfp.Mode()); err != nil {
+				return fmt.Errorf("failed to Chmod dst: %v", err)
 			}
+			if _, err = io.Copy(dstfp, lf); err != nil {
+				return fmt.Errorf("failed to Copy: %v", err)
+			}
+			return nil
+		}(destTmp); err != nil {
+			return err
 		}
+
+		if err = client.PosixRename(destTmp, dest); err != nil {
+			return fmt.Errorf("failed to rename %s to %s: %v", destTmp, dest, err)
+		}
+
 		_ = epu.Add(1)
 	}
 	return nil
-}
-
-func checkIfRemoteFileExists(client *sftp.Client, fp string) (bool, error) {
-	_, err := client.Stat(fp)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
-func isCheckFileMD5() bool {
-	if v, err := system.Get(system.ScpChecksumConfigKey); err == nil {
-		boolVal, _ := strconv.ParseBool(v)
-		return boolVal
-	}
-	return true
 }

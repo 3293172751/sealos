@@ -1,66 +1,81 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import {
-  Box,
-  Button,
-  Flex,
-  Grid,
-  FormControl,
-  Input,
-  Divider,
-  Switch,
-  Accordion,
-  AccordionButton,
-  AccordionItem,
-  AccordionPanel,
-  AccordionIcon,
-  Link,
-  useTheme,
-  useDisclosure
-} from '@chakra-ui/react';
-import { InfoOutlineIcon } from '@chakra-ui/icons';
-import { useFieldArray, UseFormReturn } from 'react-hook-form';
-import { useRouter } from 'next/router';
-import RangeInput from '@/components/RangeInput';
-import MySlider from '@/components/Slider';
-import MyRangeSlider from '@/components/RangeSlider';
+import { obj2Query } from '@/api/tools';
 import MyIcon from '@/components/Icon';
-import EditEnvs from './EditEnvs';
-import type { ConfigMapType } from './ConfigmapModal';
-import type { StoreType } from './StoreModal';
+import { MyRangeSlider, MySelect, MySlider, MyTooltip, RangeInput, Tabs, Tip } from '@sealos/ui';
+import { defaultSliderKey, ProtocolList } from '@/constants/app';
+import { GpuAmountMarkList } from '@/constants/editApp';
+import { useToast } from '@/hooks/useToast';
+import { useGlobalStore } from '@/store/global';
+import { SEALOS_DOMAIN } from '@/store/static';
+import { useUserStore } from '@/store/user';
 import type { QueryType } from '@/types';
 import type { AppEditType } from '@/types/app';
+import { sliderNumber2MarkList } from '@/utils/adapt';
+import { InfoOutlineIcon } from '@chakra-ui/icons';
+import {
+  Accordion,
+  AccordionButton,
+  AccordionIcon,
+  AccordionItem,
+  AccordionPanel,
+  Box,
+  Button,
+  Center,
+  Divider,
+  Flex,
+  FormControl,
+  Grid,
+  IconButton,
+  Input,
+  Switch,
+  useDisclosure,
+  useTheme
+} from '@chakra-ui/react';
+import { throttle } from 'lodash';
 import { customAlphabet } from 'nanoid';
-import { CpuSlideMarkList, MemorySlideMarkList } from '@/constants/editApp';
-import { SEALOS_DOMAIN } from '@/store/static';
-import Tabs from '@/components/Tabs';
-import Tip from '@/components/Tip';
-import MySelect from '@/components/Select';
-
+import { useTranslation } from 'next-i18next';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFieldArray, UseFormReturn } from 'react-hook-form';
+import type { ConfigMapType } from './ConfigmapModal';
+import type { CustomAccessModalParams } from './CustomAccessModal';
+import PriceBox from './PriceBox';
+import QuotaBox from './QuotaBox';
+import type { StoreType } from './StoreModal';
+import styles from './index.module.scss';
 
+const CustomAccessModal = dynamic(() => import('./CustomAccessModal'));
 const ConfigmapModal = dynamic(() => import('./ConfigmapModal'));
 const StoreModal = dynamic(() => import('./StoreModal'));
+const EditEnvs = dynamic(() => import('./EditEnvs'));
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz', 12);
-import styles from './index.module.scss';
-import { obj2Query } from '@/api/tools';
-import { throttle } from 'lodash';
-import { Tooltip } from '@chakra-ui/react';
+
+const labelWidth = 120;
 
 const Form = ({
   formHook,
   already,
   defaultStorePathList,
-  pxVal
+  countGpuInventory,
+  pxVal,
+  refresh,
+  isAdvancedOpen
 }: {
   formHook: UseFormReturn<AppEditType, any>;
   already: boolean;
   defaultStorePathList: string[];
+  countGpuInventory: (type?: string) => number;
   pxVal: number;
+  refresh: boolean;
+  isAdvancedOpen: boolean;
 }) => {
   if (!formHook) return null;
-
+  const { t } = useTranslation();
+  const { formSliderListConfig } = useGlobalStore();
+  const { userSourcePrice } = useUserStore();
   const router = useRouter();
+  const { toast } = useToast();
   const { name } = router.query as QueryType;
   const theme = useTheme();
   const isEdit = useMemo(() => !!name, [name]);
@@ -69,9 +84,19 @@ const Form = ({
     control,
     setValue,
     getValues,
+    watch,
     formState: { errors }
   } = formHook;
 
+  const {
+    fields: networks,
+    append: appendNetworks,
+    remove: removeNetworks,
+    update: updateNetworks
+  } = useFieldArray({
+    control,
+    name: 'networks'
+  });
   const { fields: envs, replace: replaceEnvs } = useFieldArray({
     control,
     name: 'envs'
@@ -93,46 +118,44 @@ const Form = ({
     name: 'storeList'
   });
 
-  const navList = [
-    {
-      id: 'baseInfo',
-      label: '基础配置',
-      icon: 'formInfo',
-      isSetting:
-        getValues('appName') &&
-        getValues('imageName') &&
-        (getValues('secret.use')
-          ? getValues('secret.username') &&
-            getValues('secret.password') &&
-            getValues('secret.serverAddress')
-          : true)
-    },
-    {
-      id: 'deployMode',
-      label: '部署模式',
-      icon: 'deployMode',
-      isSetting: getValues('hpa.use') ? !!getValues('hpa.value') : !!getValues('replicas')
-    },
-    {
-      id: 'network',
-      label: '网络配置',
-      icon: 'network',
-      isSetting: !!getValues('containerOutPort')
-    },
-    {
-      id: 'settings',
-      label: '高级配置',
-      icon: 'settings',
-      isSetting:
-        getValues('runCMD') ||
-        getValues('cmdParam') ||
-        getValues('envs').length > 0 ||
-        getValues('configMapList').length > 0 ||
-        getValues('storeList').length > 0
-    }
-  ];
+  const navList = useMemo(
+    () => [
+      {
+        id: 'baseInfo',
+        label: 'Basic Config',
+        icon: 'formInfo',
+        isSetting:
+          getValues('appName') &&
+          getValues('imageName') &&
+          (getValues('secret.use')
+            ? getValues('secret.username') &&
+              getValues('secret.password') &&
+              getValues('secret.serverAddress')
+            : true)
+      },
+      {
+        id: 'network',
+        label: 'Network Configuration',
+        icon: 'network',
+        isSetting: getValues('networks').length > 0
+      },
+      {
+        id: 'settings',
+        label: 'Advanced Configuration',
+        icon: 'settings',
+        isSetting:
+          getValues('runCMD') ||
+          getValues('cmdParam') ||
+          getValues('envs').length > 0 ||
+          getValues('configMapList').length > 0 ||
+          getValues('storeList').length > 0
+      }
+    ],
+    [getValues, refresh]
+  );
 
   const [activeNav, setActiveNav] = useState(navList[0].id);
+  const [customAccessModalData, setCustomAccessModalData] = useState<CustomAccessModalParams>();
   const [configEdit, setConfigEdit] = useState<ConfigMapType>();
   const [storeEdit, setStoreEdit] = useState<StoreType>();
   const { isOpen: isEditEnvs, onOpen: onOpenEditEnvs, onClose: onCloseEditEnvs } = useDisclosure();
@@ -164,9 +187,10 @@ const Form = ({
     // eslint-disable-next-line
   }, []);
 
+  // common form label
   const Label = ({
     children,
-    w = 80,
+    w = labelWidth,
     ...props
   }: {
     children: string;
@@ -175,9 +199,10 @@ const Form = ({
   }) => (
     <Box
       flex={`0 0 ${w === 'auto' ? 'auto' : `${w}px`}`}
-      {...props}
-      color={'#333'}
+      color={'grayModern.900'}
+      fontWeight={'bold'}
       userSelect={'none'}
+      {...props}
     >
       {children}
     </Box>
@@ -185,20 +210,130 @@ const Form = ({
 
   const boxStyles = {
     border: theme.borders.base,
-    borderRadius: 'sm',
+    borderRadius: 'lg',
     mb: 4,
     bg: 'white'
   };
+
   const headerStyles = {
     py: 4,
-    pl: '46px',
-    fontSize: '2xl',
-    color: 'myGray.900',
+    pl: '42px',
+    borderTopRadius: 'lg',
+    fontSize: 'xl',
+    color: 'grayModern.900',
     fontWeight: 'bold',
     display: 'flex',
     alignItems: 'center',
-    backgroundColor: 'myWhite.600'
+    backgroundColor: 'grayModern.50'
   };
+
+  // add NoGPU select item
+  const gpuSelectList = useMemo(
+    () =>
+      userSourcePrice?.gpu
+        ? [
+            {
+              label: t('No GPU'),
+              value: ''
+            },
+            ...userSourcePrice.gpu.map((item) => ({
+              icon: 'nvidia',
+              label: (
+                <Flex>
+                  <Box color={'myGray.900'}>{item.alias}</Box>
+                  <Box mx={3} color={'grayModern.900'}>
+                    |
+                  </Box>
+                  <Box color={'grayModern.900'}>
+                    {t('vm')} : {Math.round(item.vm)}G
+                  </Box>
+                  <Box mx={3} color={'grayModern.900'}>
+                    |
+                  </Box>
+                  <Flex pr={3}>
+                    <Box color={'grayModern.900'}>{t('Inventory')}&ensp;:&ensp;</Box>
+                    <Box color={'#FB7C3C'}>{countGpuInventory(item.type)}</Box>
+                  </Flex>
+                </Flex>
+              ),
+              value: item.type
+            }))
+          ]
+        : [],
+    [countGpuInventory, t, userSourcePrice?.gpu, refresh]
+  );
+  const selectedGpu = useMemo(() => {
+    const selected = userSourcePrice?.gpu?.find((item) => item.type === getValues('gpu.type'));
+    if (!selected) return;
+    return {
+      ...selected,
+      inventory: countGpuInventory(selected.type)
+    };
+  }, [userSourcePrice?.gpu, countGpuInventory, getValues, refresh]);
+
+  // cpu, memory have different sliderValue
+  const countSliderList = useCallback(() => {
+    const gpuType = getValues('gpu.type');
+    const key = gpuType && formSliderListConfig[gpuType] ? gpuType : defaultSliderKey;
+
+    const cpu = getValues('cpu');
+    const memory = getValues('memory');
+
+    const cpuList = formSliderListConfig[key].cpu;
+    const memoryList = formSliderListConfig[key].memory;
+
+    const sortedCpuList = !!gpuType
+      ? cpuList
+      : cpu !== undefined
+      ? [...new Set([...cpuList, cpu])].sort((a, b) => a - b)
+      : cpuList;
+
+    const sortedMemoryList = !!gpuType
+      ? memoryList
+      : memory !== undefined
+      ? [...new Set([...memoryList, memory])].sort((a, b) => a - b)
+      : memoryList;
+
+    return {
+      cpu: sliderNumber2MarkList({
+        val: sortedCpuList,
+        type: 'cpu',
+        gpuAmount: getValues('gpu.amount')
+      }),
+      memory: sliderNumber2MarkList({
+        val: sortedMemoryList,
+        type: 'memory',
+        gpuAmount: getValues('gpu.amount')
+      })
+    };
+  }, [formSliderListConfig, getValues]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const SliderList = useMemo(() => countSliderList(), [already, refresh]);
+
+  const persistentVolumes = useMemo(() => {
+    return getValues('volumes')
+      .filter((item) => 'persistentVolumeClaim' in item)
+      .reduce(
+        (
+          acc: {
+            path: string;
+            name: string;
+          }[],
+          volume
+        ) => {
+          const mount = getValues('volumeMounts').find((m) => m.name === volume.name);
+          if (mount) {
+            acc.push({
+              path: mount.mountPath,
+              name: volume.name
+            });
+          }
+          return acc;
+        },
+        []
+      );
+  }, [getValues, refresh]);
 
   return (
     <>
@@ -212,8 +347,8 @@ const Form = ({
         <Box>
           <Tabs
             list={[
-              { id: 'form', label: '配置表单' },
-              { id: 'yaml', label: 'YAML 文件' }
+              { id: 'form', label: t('Config Form') },
+              { id: 'yaml', label: t('YAML File') }
             ]}
             activeId={'form'}
             onChange={() =>
@@ -225,42 +360,74 @@ const Form = ({
               )
             }
           />
-          <Box mt={3} borderRadius={'sm'} overflow={'hidden'} backgroundColor={'white'}>
+          <Box
+            mt={3}
+            borderRadius={'md'}
+            overflow={'hidden'}
+            backgroundColor={'white'}
+            border={theme.borders.base}
+            p={'4px'}
+          >
             {navList.map((item) => (
               <Box key={item.id} onClick={() => router.replace(`#${item.id}`)}>
                 <Flex
-                  px={5}
-                  py={3}
+                  borderRadius={'base'}
                   cursor={'pointer'}
-                  borderLeft={'2px solid'}
+                  gap={'8px'}
                   alignItems={'center'}
-                  h={'48px'}
+                  h={'40px'}
                   _hover={{
-                    backgroundColor: 'myWhite.400'
+                    backgroundColor: 'grayModern.100'
                   }}
-                  {...(activeNav === item.id
-                    ? {
-                        fontWeight: 'bold',
-                        borderColor: 'myGray.900',
-                        backgroundColor: 'myWhite.600 !important'
-                      }
-                    : {
-                        color: 'myGray.500',
-                        borderColor: 'myGray.200',
-                        backgroundColor: 'transparent'
-                      })}
+                  color="grayModern.900"
+                  backgroundColor={activeNav === item.id ? 'grayModern.100' : 'transparent'}
                 >
+                  <Box
+                    w={'2px'}
+                    h={'24px'}
+                    justifySelf={'start'}
+                    bg={'grayModern.900'}
+                    borderRadius={'12px'}
+                    opacity={activeNav === item.id ? 1 : 0}
+                  ></Box>
                   <MyIcon
                     name={item.icon as any}
                     w={'20px'}
                     h={'20px'}
-                    color={activeNav === item.id ? 'myGray.500' : 'myGray.400'}
+                    color={activeNav === item.id ? 'grayModern.900' : 'grayModern.500'}
                   />
-                  <Box ml={4}>{item.label}</Box>
+                  <Box>{t(item.label)}</Box>
                 </Flex>
               </Box>
             ))}
           </Box>
+          {userSourcePrice && (
+            <Box mt={3} overflow={'hidden'}>
+              <QuotaBox />
+            </Box>
+          )}
+          {userSourcePrice && (
+            <Box mt={3} overflow={'hidden'}>
+              <PriceBox
+                pods={
+                  getValues('hpa.use')
+                    ? [getValues('hpa.minReplicas') || 1, getValues('hpa.maxReplicas') || 2]
+                    : [getValues('replicas') || 1, getValues('replicas') || 1]
+                }
+                cpu={getValues('cpu')}
+                memory={getValues('memory')}
+                storage={getValues('storeList').reduce((sum, item) => sum + item.value, 0)}
+                gpu={
+                  !!getValues('gpu.type')
+                    ? {
+                        type: getValues('gpu.type'),
+                        amount: getValues('gpu.amount')
+                      }
+                    : undefined
+                }
+              />
+            </Box>
+          )}
         </Box>
 
         <Box
@@ -273,40 +440,52 @@ const Form = ({
           {/* base info */}
           <Box id={'baseInfo'} {...boxStyles}>
             <Box {...headerStyles}>
-              <MyIcon name={'formInfo'} mr={5} w={'20px'} color={'myGray.500'} />
-              基础配置
+              <MyIcon name={'formInfo'} mr={'12px'} w={'24px'} color={'grayModern.900'} />
+              {t('Basic Config')}
             </Box>
             <Box px={'42px'} py={'24px'}>
+              {/* app name */}
               <FormControl mb={7} isInvalid={!!errors.appName} w={'500px'}>
                 <Flex alignItems={'center'}>
-                  <Label>应用名称</Label>
+                  <Label>{t('App Name')}</Label>
                   <Input
+                    width={'350px'}
                     disabled={isEdit}
-                    title={isEdit ? '不允许修改应用名称' : ''}
+                    title={isEdit ? t('Not allowed to change app name') || '' : ''}
                     autoFocus={true}
+                    maxLength={60}
+                    placeholder={
+                      t(
+                        'Starts with a letter and can contain only lowercase letters, digits, and hyphens (-)'
+                      ) || ''
+                    }
                     {...register('appName', {
-                      required: '应用名称不能为空',
+                      required: t('Not allowed to change app name') || '',
+                      maxLength: 60,
                       pattern: {
-                        value: /^[a-z0-9]+([-.][a-z0-9]+)*$/g,
-                        message: '应用名只能包含小写字母、数字、-和.'
+                        value: /[a-z]([-a-z0-9]*[a-z0-9])?/g,
+                        message: t(
+                          'The application name can contain only lowercase letters, digits, and hyphens (-) and must start with a letter'
+                        )
                       }
                     })}
                   />
                 </Flex>
               </FormControl>
-              <Box mb={7}>
+              {/* image */}
+              <Box mb={7} className="driver-deploy-image">
                 <Flex alignItems={'center'}>
-                  <Label>镜像源</Label>
+                  <Label>{t('Image')}</Label>
                   <Tabs
                     w={'126px'}
                     size={'sm'}
                     list={[
                       {
-                        label: '公共',
+                        label: t('public'),
                         id: `public`
                       },
                       {
-                        label: '私有',
+                        label: t('private'),
                         id: `private`
                       }
                     ]}
@@ -320,318 +499,469 @@ const Form = ({
                     }}
                   />
                 </Flex>
-                <Box mt={4} pl={10} borderLeft={theme.borders.base}>
-                  <FormControl isInvalid={!!errors.imageName} w={'500px'}>
-                    <Flex alignItems={'center'}>
-                      <Label>镜像名</Label>
-                      <Input
-                        value={getValues('imageName')}
-                        backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                        placeholder="镜像名"
-                        {...register('imageName', {
-                          required: '镜像名不能为空',
-                          // pattern: {
-                          //   value: /^.+\/.+:.+$/g,
-                          //   message: '镜像名需满足 url/name:version 的格式'
-                          // },
-                          setValueAs(e) {
-                            return e.replace(/\s*/g, '');
-                          }
-                        })}
-                      />
-                    </Flex>
+                <Box mt={4} pl={`${labelWidth}px`}>
+                  <FormControl isInvalid={!!errors.imageName} w={'420px'}>
+                    <Box mb={1} fontSize={'sm'}>
+                      {t('Image Name')}
+                    </Box>
+                    <Input
+                      width={'350px'}
+                      value={getValues('imageName')}
+                      backgroundColor={getValues('imageName') ? 'myWhite.500' : 'grayModern.100'}
+                      placeholder={`${t('Image Name')}`}
+                      {...register('imageName', {
+                        required: 'Image name cannot be empty',
+                        setValueAs(e) {
+                          return e.replace(/\s*/g, '');
+                        }
+                      })}
+                    />
                   </FormControl>
                   {getValues('secret.use') ? (
                     <>
-                      <FormControl mt={5} isInvalid={!!errors.secret?.username} w={'500px'}>
-                        <Flex alignItems={'center'}>
-                          <Label>用户名</Label>
-                          <Input
-                            backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                            placeholder={'镜像仓库的用户名'}
-                            {...register('secret.username', {
-                              required: '私有镜像, 用户名不能为空'
-                            })}
-                          />
-                        </Flex>
+                      <FormControl mt={4} isInvalid={!!errors.secret?.username} w={'420px'}>
+                        <Box mb={1} fontSize={'sm'}>
+                          {t('Username')}
+                        </Box>
+                        <Input
+                          backgroundColor={
+                            getValues('imageName') ? 'myWhite.500' : 'grayModern.100'
+                          }
+                          placeholder={`${t('Username for the image registry')}`}
+                          {...register('secret.username', {
+                            required: t('The user name cannot be empty') || ''
+                          })}
+                        />
                       </FormControl>
-                      <FormControl mt={5} isInvalid={!!errors.secret?.password} w={'500px'}>
-                        <Flex alignItems={'center'}>
-                          <Label>密码</Label>
-                          <Input
-                            type={'password'}
-                            placeholder={'镜像仓库的密码'}
-                            backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                            {...register('secret.password', {
-                              required: '私有镜像, 密码不能为空'
-                            })}
-                          />
-                        </Flex>
+                      <FormControl mt={4} isInvalid={!!errors.secret?.password} w={'420px'}>
+                        <Box mb={1} fontSize={'sm'}>
+                          {t('Password')}
+                        </Box>
+                        <Input
+                          type={'password'}
+                          placeholder={`${t('Password for the image registry')}`}
+                          backgroundColor={
+                            getValues('imageName') ? 'myWhite.500' : 'grayModern.100'
+                          }
+                          {...register('secret.password', {
+                            required: t('The password cannot be empty') || ''
+                          })}
+                        />
                       </FormControl>
-                      <FormControl mt={5} isInvalid={!!errors.secret?.serverAddress} w={'500px'}>
-                        <Flex alignItems={'center'}>
-                          <Label w={110}>镜像仓库地址</Label>
-                          <Input
-                            backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                            placeholder={'镜像仓库的地址'}
-                            {...register('secret.serverAddress', {
-                              required: '私有镜像, 地址不能为空'
-                            })}
-                          />
-                        </Flex>
+                      <FormControl mt={4} isInvalid={!!errors.secret?.serverAddress} w={'420px'}>
+                        <Box mb={1} fontSize={'sm'}>
+                          {t('Image Address')}
+                        </Box>
+                        <Input
+                          backgroundColor={
+                            getValues('imageName') ? 'myWhite.500' : 'grayModern.100'
+                          }
+                          placeholder={`${t('Image Address')}`}
+                          {...register('secret.serverAddress', {
+                            required: t('The image cannot be empty') || ''
+                          })}
+                        />
                       </FormControl>
                     </>
                   ) : null}
                 </Box>
               </Box>
+              {/* replicas */}
+              <Box mb={7}>
+                <Flex alignItems={'center'}>
+                  <Label>{t('Deployment Mode')}</Label>
+                  <Tabs
+                    className="driver-deploy-instance"
+                    w={'195px'}
+                    size={'sm'}
+                    list={[
+                      {
+                        label: t('Fixed instance'),
+                        id: `static`
+                      },
+                      {
+                        label: t('Auto scaling'),
+                        id: `hpa`
+                      }
+                    ]}
+                    activeId={getValues('hpa.use') ? 'hpa' : 'static'}
+                    onChange={(val) => {
+                      if (val === 'static') {
+                        setValue('hpa.use', false);
+                      } else {
+                        setValue('hpa.use', true);
+                      }
+                    }}
+                  />
+                </Flex>
+                <Box mt={4} pl={`${labelWidth}px`}>
+                  {getValues('hpa.use') ? (
+                    <>
+                      <Flex alignItems={'center'}>
+                        <MySelect
+                          width={'120px'}
+                          height="32px"
+                          value={getValues('hpa.target')}
+                          list={[
+                            { value: 'cpu', label: t('CPU') },
+                            { value: 'memory', label: t('Memory') },
+                            ...(userSourcePrice?.gpu ? [{ label: 'GPU', value: 'gpu' }] : [])
+                          ]}
+                          onchange={(val: any) => setValue('hpa.target', val)}
+                        />
+                        <Input
+                          width={'80px'}
+                          type={'number'}
+                          backgroundColor={
+                            getValues('hpa.value') ? 'myWhite.500' : 'grayModern.100'
+                          }
+                          mx={2}
+                          {...register('hpa.value', {
+                            required: t('The Cpu target is empty') || '',
+                            valueAsNumber: true,
+                            min: {
+                              value: 1,
+                              message: t('The cpu target value must be positive')
+                            },
+                            max: {
+                              value: 100,
+                              message: t('The target cpu value must be less than 100')
+                            }
+                          })}
+                        />
+                        <Box>{getValues('hpa.target') === 'gpu' ? '' : '%'}</Box>
+                        <Tip
+                          ml={4}
+                          icon={<InfoOutlineIcon />}
+                          text={t('CPU target is the CPU utilization rate of any container')}
+                          size="sm"
+                        />
+                      </Flex>
+
+                      <Box mt={5} pb={5} pr={3}>
+                        <Label mb={1} fontSize={'sm'}>
+                          {t('Replicas')}
+                        </Label>
+                        <Box w={'410px'} ml={'7px'}>
+                          <MyRangeSlider
+                            min={1}
+                            max={20}
+                            step={1}
+                            value={[getValues('hpa.minReplicas'), getValues('hpa.maxReplicas')]}
+                            setVal={(e) => {
+                              setValue('hpa.minReplicas', e[0]);
+                              setValue('hpa.maxReplicas', e[1]);
+                            }}
+                          />
+                        </Box>
+                      </Box>
+                    </>
+                  ) : (
+                    <Flex alignItems={'center'}>
+                      <Label w={'auto'} mr={3} fontSize={'12px'}>
+                        {t('Replicas')}
+                      </Label>
+                      <RangeInput
+                        value={getValues('replicas')}
+                        min={1}
+                        max={20}
+                        hoverText={
+                          t('Number of instances: 1 to 20') || 'Number of instances: 1 to 20'
+                        }
+                        setVal={(val) => {
+                          register('replicas', {
+                            required:
+                              t('The number of instances cannot be empty') ||
+                              'The number of instances cannot be empty',
+                            min: {
+                              value: 1,
+                              message: t('The minimum number of instances is 1')
+                            },
+                            max: {
+                              value: 20,
+                              message: t('The maximum number of instances is 20')
+                            }
+                          });
+                          setValue('replicas', val || '');
+                        }}
+                      />
+                    </Flex>
+                  )}
+                </Box>
+              </Box>
+
+              {userSourcePrice?.gpu && (
+                <Box mb={7}>
+                  <Flex alignItems={'center'}>
+                    <Label>GPU</Label>
+                    <MySelect
+                      width={'300px'}
+                      placeholder={t('No GPU') || ''}
+                      value={getValues('gpu.type')}
+                      list={gpuSelectList}
+                      onchange={(type: any) => {
+                        const selected = userSourcePrice?.gpu?.find((item) => item.type === type);
+                        const inventory = countGpuInventory(type);
+                        if (type === '' || (selected && inventory > 0)) {
+                          setValue('gpu.type', type);
+                          const sliderList = countSliderList();
+                          setValue('cpu', sliderList.cpu[1].value);
+                          setValue('memory', sliderList.memory[1].value);
+                        }
+                      }}
+                    />
+                  </Flex>
+                  {!!getValues('gpu.type') && (
+                    <Box mt={4} pl={`${labelWidth}px`}>
+                      <Box mb={1}>{t('Amount')}</Box>
+                      <Flex alignItems={'center'}>
+                        {GpuAmountMarkList.map((item) => {
+                          const inventory = selectedGpu?.inventory || 0;
+                          const hasInventory = item.value <= inventory;
+
+                          return (
+                            <MyTooltip
+                              key={item.value}
+                              label={hasInventory ? '' : t('Under Stock')}
+                            >
+                              <Center
+                                mr={2}
+                                w={'32px'}
+                                h={'32px'}
+                                borderRadius={'md'}
+                                border={'1px solid'}
+                                bg={'white'}
+                                {...(getValues('gpu.amount') === item.value
+                                  ? {
+                                      borderColor: 'brightBlue.500',
+                                      boxShadow: '0px 0px 0px 2.4px rgba(33, 155, 244, 0.15)'
+                                    }
+                                  : {
+                                      borderColor: 'grayModern.200',
+                                      bgColor: 'grayModern.100'
+                                    })}
+                                {...(hasInventory
+                                  ? {
+                                      cursor: 'pointer',
+                                      onClick: () => {
+                                        setValue('gpu.amount', item.value);
+                                        const sliderList = countSliderList();
+                                        setValue('cpu', sliderList.cpu[1].value);
+                                        setValue('memory', sliderList.memory[1].value);
+                                      }
+                                    }
+                                  : {
+                                      cursor: 'default',
+                                      opacity: 0.5
+                                    })}
+                              >
+                                {item.label}
+                              </Center>
+                            </MyTooltip>
+                          );
+                        })}
+                        <Box ml={3} color={'MyGray.500'}>
+                          / {t('Card')}
+                        </Box>
+                      </Flex>
+                    </Box>
+                  )}
+                </Box>
+              )}
+
+              {/* cpu && memory */}
               <Flex mb={10} pr={3} alignItems={'flex-start'}>
-                <Label w={60}>CPU</Label>
+                <Label mr={'7px'}>{t('CPU')}</Label>
                 <MySlider
-                  markList={CpuSlideMarkList}
+                  markList={SliderList.cpu}
                   activeVal={getValues('cpu')}
                   setVal={(e) => {
-                    setValue('cpu', CpuSlideMarkList[e].value);
+                    setValue('cpu', SliderList.cpu[e].value);
                   }}
-                  max={7}
+                  max={SliderList.cpu.length - 1}
                   min={0}
                   step={1}
                 />
-                <Box ml={5} transform={'translateY(10px)'} color={'myGray.500'}>
+                <Box ml={5} transform={'translateY(10px)'} color={'grayModern.900'}>
                   (Core)
                 </Box>
               </Flex>
               <Flex mb={8} pr={3} alignItems={'center'}>
-                <Label w={60}>内存</Label>
+                <Label mr={'7px'}>{t('Memory')}</Label>
                 <MySlider
-                  markList={MemorySlideMarkList}
+                  markList={SliderList.memory}
                   activeVal={getValues('memory')}
                   setVal={(e) => {
-                    setValue('memory', MemorySlideMarkList[e].value);
+                    setValue('memory', SliderList.memory[e].value);
                   }}
-                  max={8}
+                  max={SliderList.memory.length - 1}
                   min={0}
                   step={1}
                 />
               </Flex>
-            </Box>
-          </Box>
-
-          {/* deploy mode */}
-          <Box id={'deployMode'} {...boxStyles}>
-            <Box {...headerStyles}>
-              <MyIcon name={'deployMode'} mr={5} w={'20px'} color={'myGray.500'} />
-              部署模式
-            </Box>
-            <Box px={'42px'} py={'24px'}>
-              <Tabs
-                w={'165px'}
-                size={'sm'}
-                list={[
-                  {
-                    label: '固定实例',
-                    id: `static`
-                  },
-                  {
-                    label: '弹性伸缩',
-                    id: `hpa`
-                  }
-                ]}
-                activeId={getValues('hpa.use') ? 'hpa' : 'static'}
-                onChange={(val) => {
-                  if (val === 'static') {
-                    setValue('hpa.use', false);
-                  } else {
-                    setValue('hpa.use', true);
-                  }
-                }}
-              />
-              <Box mt={6} pl={10} borderLeft={'2px solid'} borderLeftColor={'myGray.100'}>
-                {getValues('hpa.use') ? (
-                  <>
-                    <Flex alignItems={'center'}>
-                      <MySelect
-                        width={'130px'}
-                        placeholder="hpa对象"
-                        value={getValues('hpa.target')}
-                        list={[
-                          { id: 'cpu', label: 'CPU目标值' },
-                          { id: 'memory', label: '内存目标值' }
-                        ]}
-                        onchange={(val: any) => setValue('hpa.target', val)}
-                      />
-
-                      <Input
-                        type={'number'}
-                        backgroundColor={getValues('hpa.value') ? 'myWhite.500' : 'myWhite.400'}
-                        mx={2}
-                        w={'80px'}
-                        {...register('hpa.value', {
-                          required: 'cpu目标值为空',
-                          valueAsNumber: true,
-                          min: {
-                            value: 1,
-                            message: 'cpu目标值需为正数'
-                          },
-                          max: {
-                            value: 100,
-                            message: 'cpu目标值需在100内'
-                          }
-                        })}
-                      />
-                      <Box>%</Box>
-                      <Tip
-                        ml={4}
-                        icon={<InfoOutlineIcon />}
-                        text="CPU 目标值为任一容器的 CPU 利用率"
-                        size="sm"
-                      />
-                    </Flex>
-
-                    <Flex mt={5} pb={5} pr={3} alignItems={'center'}>
-                      <Label w={100}>实例数</Label>
-                      <MyRangeSlider
-                        min={1}
-                        max={20}
-                        step={1}
-                        value={[getValues('hpa.minReplicas'), getValues('hpa.maxReplicas')]}
-                        setVal={(e) => {
-                          setValue('hpa.minReplicas', e[0]);
-                          setValue('hpa.maxReplicas', e[1]);
-                        }}
-                      />
-                    </Flex>
-                  </>
-                ) : (
-                  <Flex alignItems={'center'}>
-                    <Label>实例数</Label>
-                    <RangeInput
-                      value={getValues('replicas')}
-                      min={1}
-                      max={20}
-                      hoverText="实例数范围：1~20"
-                      setVal={(val) => {
-                        register('replicas', {
-                          required: '实例数不能为空',
-                          min: {
-                            value: 1,
-                            message: '实例数最小为1'
-                          },
-                          max: {
-                            value: 20,
-                            message: '实例数最大为20'
-                          }
-                        });
-                        setValue('replicas', val || '');
-                      }}
-                    />
-                  </Flex>
-                )}
-              </Box>
             </Box>
           </Box>
 
           {/* network */}
           <Box id={'network'} {...boxStyles}>
             <Box {...headerStyles}>
-              <MyIcon name={'network'} mr={5} w={'20px'} color={'myGray.500'} />
-              网络配置
+              <MyIcon name={'network'} mr={'12px'} w={'24px'} color={'grayModern.900'} />
+              {t('Network Configuration')}
             </Box>
-            <Box px={'42px'} py={'24px'}>
-              <FormControl mb={5}>
-                <Flex alignItems={'center'}>
-                  <Box flex={'0 0 100px'}>容器暴露端口</Box>
-                  <Input
-                    type={'number'}
-                    bg={getValues('containerOutPort') ? 'myWhite.500' : 'myWhite.400'}
-                    w={'100px'}
-                    {...register('containerOutPort', {
-                      required: '容器暴露端口不能为空',
-                      valueAsNumber: true,
-                      min: {
-                        value: 1,
-                        message: '暴露端口需要为正数'
-                      }
-                    })}
-                  />
-                </Flex>
-              </FormControl>
-              <Box>
-                <Flex mb={5}>
-                  <Box fontWeight={'bold'} mr={4}>
-                    外网访问
-                  </Box>
-                  <Switch
-                    size={'lg'}
-                    colorScheme={'blackAlpha'}
-                    isChecked={getValues('accessExternal.use')}
-                    {...register('accessExternal.use', {
-                      onChange: () => {
-                        // first open, add init data
-                        if (!getValues('accessExternal.outDomain')) {
-                          setValue('accessExternal', {
-                            use: true,
-                            backendProtocol: 'HTTP',
-                            outDomain: nanoid(),
-                            selfDomain: ''
-                          });
+            <Box px={'42px'} py={'24px'} userSelect={'none'}>
+              {networks.map((network, i) => (
+                <Flex
+                  alignItems={'flex-start'}
+                  key={network.id}
+                  _notLast={{ pb: 6, borderBottom: theme.borders.base }}
+                  _notFirst={{ pt: 6 }}
+                >
+                  <Box>
+                    <Box mb={'10px'} h={'20px'} fontSize={'base'} color={'grayModern.900'}>
+                      {t('Container Port')}
+                    </Box>
+                    <Input
+                      h={'32px'}
+                      type={'number'}
+                      w={'110px'}
+                      bg={'grayModern.50'}
+                      {...register(`networks.${i}.port`, {
+                        required:
+                          t('app.The container exposed port cannot be empty') ||
+                          'The container exposed port cannot be empty',
+                        valueAsNumber: true,
+                        min: {
+                          value: 1,
+                          message: t('app.The minimum exposed port is 1')
+                        },
+                        max: {
+                          value: 65535,
+                          message: t('app.The maximum number of exposed ports is 65535')
                         }
-                      }
-                    })}
-                  />
-                </Flex>
-                {getValues('accessExternal.use') && (
-                  <Box pl={10} borderLeft={theme.borders.base}>
-                    <FormControl mt={5}>
-                      <Flex alignItems={'center'}>
-                        <Box flex={'0 0 80px'}>协议</Box>
-                        <MySelect
-                          width={'120px'}
-                          value={getValues('accessExternal.backendProtocol')}
-                          list={[
-                            { id: 'HTTP', label: 'https' },
-                            { id: 'GRPC', label: 'grpcs' },
-                            { id: 'WS', label: 'websocket' }
-                          ]}
-                          onchange={(val: any) => setValue('accessExternal.backendProtocol', val)}
-                        />
-                      </Flex>
-                    </FormControl>
-                    <FormControl mt={5}>
-                      <Flex alignItems={'center'} color={'myGray.500'}>
-                        <Box flex={'0 0 80px'}>出口域名</Box>
-                        <Box userSelect={'all'}>
-                          {getValues('accessExternal.outDomain')}.{SEALOS_DOMAIN}
-                        </Box>
-                      </Flex>
-                    </FormControl>
-                    <FormControl mt={5}>
-                      <Flex alignItems={'center'}>
-                        <Box flex={'0 0 80px'}>自定义域名</Box>
-                        <Input
-                          w={'320px'}
-                          bg={
-                            getValues('accessExternal.selfDomain') ? 'myWhite.500' : 'myWhite.400'
+                      })}
+                    />
+                    {i === networks.length - 1 && networks.length < 5 && (
+                      <Box mt={3}>
+                        <Button
+                          w={'100px'}
+                          variant={'outline'}
+                          leftIcon={<MyIcon name="plus" w={'18px'} fill={'#485264'} />}
+                          onClick={() =>
+                            appendNetworks({
+                              networkName: '',
+                              portName: nanoid(),
+                              port: 80,
+                              protocol: 'HTTP',
+                              openPublicDomain: false,
+                              publicDomain: '',
+                              customDomain: '',
+                              domain: SEALOS_DOMAIN
+                            })
                           }
-                          placeholder="custom domain"
-                          {...register('accessExternal.selfDomain')}
-                        />
-                      </Flex>
-                    </FormControl>
-                    {!!getValues('accessExternal.selfDomain') && (
-                      <Flex>
-                        <Tip
-                          mt={3}
-                          size={'sm'}
-                          icon={<InfoOutlineIcon />}
-                          text={`请将您的自定义域名 cname 到 ${getValues(
-                            'accessExternal.outDomain'
-                          )}.${SEALOS_DOMAIN}`}
-                        />
-                      </Flex>
+                        >
+                          {t('Add Port')}
+                        </Button>
+                      </Box>
                     )}
                   </Box>
-                )}
-              </Box>
+                  <Box mx={7}>
+                    <Box mb={'8px'} h={'20px'} fontSize={'base'} color={'grayModern.900'}>
+                      {t('Open Public Access')}
+                    </Box>
+                    <Flex alignItems={'center'} h={'35px'}>
+                      <Switch
+                        className="driver-deploy-network-switch"
+                        size={'lg'}
+                        isChecked={!!network.openPublicDomain}
+                        onChange={(e) => {
+                          updateNetworks(i, {
+                            ...getValues('networks')[i],
+                            networkName: network.networkName || `network-${nanoid()}`,
+                            protocol: network.protocol || 'HTTP',
+                            openPublicDomain: e.target.checked,
+                            publicDomain: network.publicDomain || nanoid(),
+                            domain: network.domain || SEALOS_DOMAIN
+                          });
+                        }}
+                      />
+                    </Flex>
+                  </Box>
+                  {network.openPublicDomain && (
+                    <>
+                      <Box flex={'1 0 0'}>
+                        <Box mb={'8px'} h={'20px'}></Box>
+                        <Flex alignItems={'center'} h={'35px'}>
+                          <MySelect
+                            width={'120px'}
+                            height={'32px'}
+                            borderTopRightRadius={0}
+                            borderBottomRightRadius={0}
+                            value={network.protocol}
+                            // border={theme.borders.base}
+                            list={ProtocolList}
+                            onchange={(val: any) => {
+                              updateNetworks(i, {
+                                ...getValues('networks')[i],
+                                protocol: val
+                              });
+                            }}
+                          />
+                          <Flex
+                            maxW={'350px'}
+                            flex={'1 0 0'}
+                            alignItems={'center'}
+                            h={'32px'}
+                            bg={'grayModern.50'}
+                            px={4}
+                            border={theme.borders.base}
+                            borderLeft={0}
+                            borderTopRightRadius={'md'}
+                            borderBottomRightRadius={'md'}
+                          >
+                            <Box flex={1} userSelect={'all'} className="textEllipsis">
+                              {network.customDomain
+                                ? network.customDomain
+                                : `${network.publicDomain}.${network.domain}`}
+                            </Box>
+                            <Box
+                              fontSize={'11px'}
+                              color={'brightBlue.600'}
+                              cursor={'pointer'}
+                              onClick={() =>
+                                setCustomAccessModalData({
+                                  publicDomain: network.publicDomain,
+                                  customDomain: network.customDomain,
+                                  domain: network.domain
+                                })
+                              }
+                            >
+                              {t('Custom Domain')}
+                            </Box>
+                          </Flex>
+                        </Flex>
+                      </Box>
+                    </>
+                  )}
+                  {networks.length > 1 && (
+                    <Box ml={3}>
+                      <Box mb={'8px'} h={'20px'}></Box>
+                      <IconButton
+                        height={'32px'}
+                        width={'32px'}
+                        aria-label={'button'}
+                        variant={'outline'}
+                        bg={'#FFF'}
+                        _hover={{
+                          color: 'red.600',
+                          bg: 'rgba(17, 24, 36, 0.05)'
+                        }}
+                        icon={<MyIcon name={'delete'} w={'16px'} fill={'#485264'} />}
+                        onClick={() => removeNetworks(i)}
+                      />
+                    </Box>
+                  )}
+                </Flex>
+              ))}
             </Box>
           </Box>
           {/* settings */}
@@ -639,7 +969,7 @@ const Form = ({
             <Accordion
               id={'settings'}
               allowToggle
-              defaultIndex={navList[3].isSetting ? 0 : undefined}
+              index={isAdvancedOpen || navList[2].isSetting ? 0 : undefined}
             >
               <AccordionItem {...boxStyles}>
                 <AccordionButton
@@ -648,194 +978,273 @@ const Form = ({
                   _hover={{ bg: '' }}
                 >
                   <Flex alignItems={'center'}>
-                    <MyIcon name={'settings'} mr={5} w={'20px'} color={'myGray.500'} />
-                    <Box>高级配置</Box>
-                    <Box
-                      bg={'myGray.100'}
-                      w={'46px'}
-                      h={'28px'}
-                      lineHeight={'28px'}
-                      ml={3}
-                      fontSize={'sm'}
-                      borderRadius={'20px'}
-                      color={'myGray.600'}
+                    <MyIcon name={'settings'} mr={'12px'} w={'24px'} color={'grayModern.900'} />
+                    <Box>{t('Advanced Configuration')}</Box>
+                    <Center
+                      bg={'grayModern.200'}
+                      minW={'48px'}
+                      px={'8px'}
+                      height={'28px'}
+                      ml={'14px'}
+                      fontSize={'11px'}
+                      borderRadius={'33px'}
+                      color={'grayModern.700'}
                     >
-                      选填
-                    </Box>
+                      {t('Option')}
+                    </Center>
                   </Flex>
-                  <AccordionIcon w={'1.3em'} h={'1.3em'} color={'myGray.700'} />
+                  <AccordionIcon w={'20px'} h={'20px'} color={'#485264'} />
                 </AccordionButton>
 
                 <AccordionPanel px={'42px'} py={'24px'}>
-                  <FormControl mb={5}>
-                    <Box mb={3}>运行命令</Box>
-                    <Input
-                      w={'320px'}
-                      bg={getValues('runCMD') ? 'myWhite.500' : 'myWhite.400'}
-                      placeholder="空格分开,如: /bin/bash -c"
-                      {...register('runCMD')}
+                  <Flex mb={'16px'}>
+                    <Label className={styles.formSecondTitle}>{t('Command')}</Label>
+                    <Tip
+                      icon={<InfoOutlineIcon />}
+                      size="sm"
+                      text={t('If no, the default command is used')}
                     />
+                  </Flex>
+                  {/* command && param */}
+                  <FormControl mb={7}>
+                    <Flex alignItems={'center'} className="driver-deploy-command">
+                      <Label>{t('Run command')}</Label>
+                      <Input
+                        w={'350px'}
+                        bg={getValues('runCMD') ? 'myWhite.500' : 'grayModern.100'}
+                        placeholder={`${t('Such as')} /bin/bash -c`}
+                        {...register('runCMD')}
+                      />
+                    </Flex>
                   </FormControl>
                   <FormControl>
-                    <Box mb={3}>命令参数</Box>
-                    <Input
-                      w={'320px'}
-                      bg={getValues('cmdParam') ? 'myWhite.500' : 'myWhite.400'}
-                      placeholder="空格分开,如: HOSTNAME PORT"
-                      {...register('cmdParam')}
-                    />
+                    <Flex alignItems={'center'}>
+                      <Label>{t('Command parameters')}</Label>
+                      <Input
+                        w={'350px'}
+                        bg={getValues('cmdParam') ? 'myWhite.500' : 'grayModern.100'}
+                        placeholder={`${t('Such as')} sleep 10 && /entrypoint.sh db createdb`}
+                        {...register('cmdParam')}
+                      />
+                    </Flex>
                   </FormControl>
 
-                  <Divider my={'24px'} bg={'myGray.100'} />
+                  <Divider my={'30px'} borderColor={'#EFF0F1'} />
 
-                  <Box w={'320px'}>
-                    <Box className={styles.formSecondTitle}>环境变量</Box>
-                    <table className={styles.table}>
-                      <tbody>
-                        {envs.map((env) => (
-                          <tr key={env.id}>
-                            <th>{env.key}</th>
-                            <Tooltip label={env.value}>
-                              <th
+                  {/* env */}
+                  <Box w={'100%'} maxW={'600px'}>
+                    <Flex alignItems={'center'}>
+                      <Label className={styles.formSecondTitle}>{t('Environment Variables')}</Label>
+                      <Button
+                        w={'100%'}
+                        height={'32px'}
+                        variant={'outline'}
+                        fontSize={'base'}
+                        leftIcon={<MyIcon name="edit" width={'16px'} fill={'#485264'} />}
+                        onClick={onOpenEditEnvs}
+                      >
+                        {t('Edit Environment Variables')}
+                      </Button>
+                    </Flex>
+                    <Box pl={`${labelWidth}px`} mt={3}>
+                      <table className={'table-cross'}>
+                        <tbody>
+                          {envs.map((env) => {
+                            const valText = env.value
+                              ? env.value
+                              : env.valueFrom
+                              ? 'value from | ***'
+                              : '';
+                            return (
+                              <tr key={env.id}>
+                                <th>{env.key}</th>
+                                <th>
+                                  <MyTooltip label={valText}>
+                                    <Box
+                                      className={styles.textEllipsis}
+                                      style={{
+                                        userSelect: 'auto'
+                                      }}
+                                    >
+                                      {valText}
+                                    </Box>
+                                  </MyTooltip>
+                                </th>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </Box>
+                  </Box>
+
+                  <Divider my={'30px'} borderColor={'#EFF0F1'} />
+
+                  <Box>
+                    <Flex alignItems={'center'} maxW={'600px'}>
+                      <Label className={styles.formSecondTitle}>{t('Configuration File')}</Label>
+                      <Button
+                        w={'100%'}
+                        height={'32px'}
+                        variant={'outline'}
+                        onClick={() => setConfigEdit({ mountPath: '', value: '' })}
+                        leftIcon={<MyIcon name="plus" w={'16px'} fill="#485264" />}
+                      >
+                        {t('form.add_configmap')}
+                      </Button>
+                    </Flex>
+                    <Box mt={4} pl={`${labelWidth}px`}>
+                      {configMaps.map((item, index) => (
+                        <Flex key={item.id} _notLast={{ mb: 5 }} alignItems={'center'}>
+                          <Flex
+                            alignItems={'center'}
+                            px={4}
+                            py={1}
+                            border={theme.borders.base}
+                            flex={'0 0 320px'}
+                            w={0}
+                            borderRadius={'md'}
+                            cursor={'pointer'}
+                            onClick={() => setConfigEdit(item)}
+                            bg={'grayModern.25'}
+                          >
+                            <MyIcon name={'configMap'} />
+                            <Box ml={4} flex={'1 0 0'} w={0}>
+                              <Box color={'myGray.900'} fontWeight={'bold'}>
+                                {item.mountPath}
+                              </Box>
+                              <Box
                                 className={styles.textEllipsis}
-                                style={{
-                                  userSelect: 'auto'
-                                }}
+                                color={'grayModern.900'}
+                                fontSize={'sm'}
                               >
-                                {env.value}
-                              </th>
-                            </Tooltip>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <Button
-                      mt={4}
-                      w={'100%'}
-                      variant={'base'}
-                      leftIcon={<MyIcon name="edit" />}
-                      onClick={onOpenEditEnvs}
-                    >
-                      编辑环境变量
-                    </Button>
-                  </Box>
-
-                  <Divider my={'24px'} bg={'myGray.100'} />
-
-                  <Box>
-                    <Box className={styles.formSecondTitle}>Configmap 配置文件</Box>
-                    {configMaps.map((item, index) => (
-                      <Flex key={item.id} _notLast={{ mb: 5 }} alignItems={'center'}>
-                        <Flex
-                          alignItems={'center'}
-                          px={4}
-                          py={1}
-                          border={theme.borders.base}
-                          flex={'0 0 320px'}
-                          w={0}
-                          borderRadius={'sm'}
-                          cursor={'pointer'}
-                          onClick={() => setConfigEdit(item)}
-                          bg={'myWhite.300'}
-                        >
-                          <MyIcon name={'configMap'} />
-                          <Box ml={4} flex={'1 0 0'} w={0}>
-                            <Box color={'myGray.900'} fontWeight={'bold'}>
-                              {item.mountPath}
+                                {item.value}
+                              </Box>
                             </Box>
-                            <Box
-                              className={styles.textEllipsis}
-                              color={'myGray.500'}
-                              fontSize={'sm'}
-                            >
-                              {item.value}
-                            </Box>
-                          </Box>
+                          </Flex>
+                          <IconButton
+                            height={'32px'}
+                            width={'32px'}
+                            variant={'outline'}
+                            aria-label={'button'}
+                            bg={'#FFF'}
+                            ml={3}
+                            _hover={{
+                              color: 'red.600',
+                              bg: 'rgba(17, 24, 36, 0.05)'
+                            }}
+                            icon={<MyIcon name={'delete'} w={'16px'} fill={'#485264'} />}
+                            onClick={() => removeConfigMaps(index)}
+                          />
                         </Flex>
-                        <Box
-                          className={styles.deleteIcon}
-                          ml={3}
-                          cursor={'pointer'}
-                          onClick={() => removeConfigMaps(index)}
-                        >
-                          <MyIcon name="delete" w={'16px'} h={'16px'} />
-                        </Box>
-                      </Flex>
-                    ))}
-
-                    <Button
-                      mt={3}
-                      onClick={() => setConfigEdit({ mountPath: '', value: '' })}
-                      variant={'base'}
-                      leftIcon={<MyIcon name="plus" />}
-                      w={'320px'}
-                    >
-                      新增 configmap
-                    </Button>
+                      ))}
+                    </Box>
                   </Box>
 
-                  <Divider my={'24px'} bg={'myGray.100'} />
+                  <Divider my={'30px'} borderColor={'#EFF0F1'} />
 
-                  <Box>
+                  <Box className="driver-deploy-storage">
                     <Flex alignItems={'center'} mb={'10px'}>
-                      <Box className={styles.formSecondTitle} m={0}>
-                        本地存储
-                      </Box>
+                      <Label className={styles.formSecondTitle} m={0}>
+                        {t('Local Storage')}
+                      </Label>
+
+                      <Button
+                        w={'320px'}
+                        height={'32px'}
+                        variant={'outline'}
+                        onClick={() => setStoreEdit({ name: '', path: '', value: 1 })}
+                        leftIcon={<MyIcon name="plus" w={'16px'} fill="#485264" />}
+                      >
+                        {t('Add volume')}
+                      </Button>
                       <Tip
                         ml={4}
                         icon={<InfoOutlineIcon />}
                         size="sm"
-                        text="多个实例间数据不互通"
+                        text={t('Data cannot be communicated between multiple instances')}
                       />
                     </Flex>
-                    {storeList.map((item, index) => (
-                      <Flex key={item.id} _notLast={{ mb: 5 }} alignItems={'center'}>
-                        <Flex
-                          alignItems={'center'}
-                          px={4}
-                          py={1}
-                          border={theme.borders.base}
-                          flex={'0 0 320px'}
-                          w={0}
-                          borderRadius={'sm'}
-                          cursor={'pointer'}
-                          bg={'myWhite.300'}
-                          onClick={() => setStoreEdit(item)}
-                        >
-                          <MyIcon name={'store'} />
-                          <Box ml={4} flex={'1 0 0'} w={0}>
-                            <Box color={'myGray.900'} fontWeight={'bold'}>
-                              {item.path}
+                    <Box mt={4} pl={`${labelWidth}px`}>
+                      {storeList.map((item, index) => (
+                        <Flex key={item.id} _notLast={{ mb: 5 }} alignItems={'center'}>
+                          <Flex
+                            alignItems={'center'}
+                            px={4}
+                            py={1}
+                            border={theme.borders.base}
+                            flex={'0 0 320px'}
+                            w={0}
+                            borderRadius={'md'}
+                            cursor={'pointer'}
+                            bg={'grayModern.25'}
+                            onClick={() => setStoreEdit(item)}
+                          >
+                            <MyIcon name={'store'} />
+                            <Box ml={4} flex={'1 0 0'} w={0}>
+                              <Box color={'myGray.900'} fontWeight={'bold'}>
+                                {item.path}
+                              </Box>
+                              <Box
+                                className={styles.textEllipsis}
+                                color={'grayModern.900'}
+                                fontSize={'sm'}
+                              >
+                                {item.value} Gi
+                              </Box>
                             </Box>
-                            <Box
-                              className={styles.textEllipsis}
-                              color={'myGray.500'}
-                              fontSize={'sm'}
-                            >
-                              {item.value} Gi
-                            </Box>
-                          </Box>
+                          </Flex>
+                          <IconButton
+                            height={'32px'}
+                            width={'32px'}
+                            aria-label={'button'}
+                            variant={'outline'}
+                            bg={'#FFF'}
+                            ml={3}
+                            icon={<MyIcon name={'delete'} w={'16px'} fill={'#485264'} />}
+                            _hover={{
+                              color: 'red.600',
+                              bg: 'rgba(17, 24, 36, 0.05)'
+                            }}
+                            onClick={() => {
+                              if (storeList.length === 1) {
+                                toast({
+                                  title: t('Store At Least One'),
+                                  status: 'error'
+                                });
+                              } else {
+                                removeStoreList(index);
+                              }
+                            }}
+                          />
                         </Flex>
-                        <Box
-                          className={styles.deleteIcon}
-                          ml={3}
-                          cursor={'pointer'}
-                          onClick={() => removeStoreList(index)}
-                        >
-                          <MyIcon name="delete" w={'16px'} h={'16px'} />
-                        </Box>
-                      </Flex>
-                    ))}
-
-                    <Button
-                      mt={3}
-                      onClick={() => setStoreEdit({ path: '', value: 1 })}
-                      variant={'base'}
-                      leftIcon={<MyIcon name="plus" />}
-                      w={'320px'}
-                    >
-                      新增存储卷
-                    </Button>
+                      ))}
+                      {persistentVolumes.map((item) => (
+                        <Flex key={item.path} _notLast={{ mb: 5 }} alignItems={'center'}>
+                          <Flex
+                            alignItems={'center'}
+                            px={4}
+                            py={1}
+                            border={theme.borders.base}
+                            flex={'0 0 320px'}
+                            w={0}
+                            borderRadius={'md'}
+                            cursor={'not-allowed'}
+                            bg={'grayModern.25'}
+                          >
+                            <MyIcon name={'store'} />
+                            <Box ml={4} flex={'1 0 0'} w={0}>
+                              <Box color={'myGray.900'} fontWeight={'bold'}>
+                                {item.path}
+                              </Box>
+                            </Box>
+                            <Box fontSize={'12px'} color={'grayModern.600'}>
+                              {t('shared')}
+                            </Box>
+                          </Flex>
+                        </Flex>
+                      ))}
+                    </Box>
                   </Box>
                 </AccordionPanel>
               </AccordionItem>
@@ -843,12 +1252,26 @@ const Form = ({
           )}
         </Box>
       </Grid>
-      {isEditEnvs && (
-        <EditEnvs
-          defaultVal={envs.map((item) => `${item.key}=${item.value}`).join('\n')}
-          onClose={onCloseEditEnvs}
-          successCb={(e) => replaceEnvs(e)}
+      {!!customAccessModalData && (
+        <CustomAccessModal
+          {...customAccessModalData}
+          onClose={() => setCustomAccessModalData(undefined)}
+          onSuccess={(e) => {
+            const i = networks.findIndex(
+              (item) => item.publicDomain === customAccessModalData.publicDomain
+            );
+            if (i === -1) return;
+            updateNetworks(i, {
+              ...networks[i],
+              customDomain: e
+            });
+
+            setCustomAccessModalData(undefined);
+          }}
         />
+      )}
+      {isEditEnvs && (
+        <EditEnvs defaultEnv={envs} onClose={onCloseEditEnvs} successCb={(e) => replaceEnvs(e)} />
       )}
       {configEdit && (
         <ConfigmapModal
@@ -887,6 +1310,7 @@ const Form = ({
               setValue(
                 'storeList',
                 storeList.map((item) => ({
+                  name: item.id === e.id ? e.name : item.name,
                   path: item.id === e.id ? e.path : item.path,
                   value: item.id === e.id ? e.value : item.value
                 }))

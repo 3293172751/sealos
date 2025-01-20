@@ -26,11 +26,13 @@ import (
 	"github.com/labring/sealos/pkg/clusterfile"
 	"github.com/labring/sealos/pkg/config"
 	"github.com/labring/sealos/pkg/constants"
-	"github.com/labring/sealos/pkg/filesystem"
+	"github.com/labring/sealos/pkg/filesystem/rootfs"
 	"github.com/labring/sealos/pkg/guest"
 	"github.com/labring/sealos/pkg/runtime"
+	"github.com/labring/sealos/pkg/runtime/factory"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	"github.com/labring/sealos/pkg/utils/logger"
+	"github.com/labring/sealos/pkg/utils/maps"
 	"github.com/labring/sealos/pkg/utils/yaml"
 )
 
@@ -39,6 +41,7 @@ type CreateProcessor struct {
 	Buildah     buildah.Interface
 	Runtime     runtime.Interface
 	Guest       guest.Interface
+	ExtraEnvs   map[string]string // parsing from CLI arguments
 }
 
 func (c *CreateProcessor) Execute(cluster *v2.Cluster) error {
@@ -78,7 +81,11 @@ func (c *CreateProcessor) GetPipeLine() ([]func(cluster *v2.Cluster) error, erro
 
 func (c *CreateProcessor) Check(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Check in CreateProcessor.")
-	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewHostChecker()}, cluster, checker.PhasePre))
+	var ips []string
+	// the order doesn't matter
+	ips = append(ips, cluster.GetMasterIPAndPortList()...)
+	ips = append(ips, cluster.GetNodeIPAndPortList()...)
+	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips), checker.NewContainerdChecker(ips)}, cluster, checker.PhasePre))
 }
 
 func (c *CreateProcessor) PreProcess(cluster *v2.Cluster) error {
@@ -87,14 +94,21 @@ func (c *CreateProcessor) PreProcess(cluster *v2.Cluster) error {
 }
 
 func (c *CreateProcessor) preProcess(cluster *v2.Cluster) error {
-	if err := MountClusterImages(cluster, c.Buildah); err != nil {
+	if err := MountClusterImages(c.Buildah, cluster, false); err != nil {
 		return err
 	}
-	runTime, err := runtime.NewDefaultRuntime(cluster, c.ClusterFile.GetKubeadmConfig())
+	// env in cluster.spec will be merged into every mounts object
+	env := maps.FromSlice(cluster.Spec.Env)
+	// extra env must been set at the very first
+	for i := range cluster.Status.Mounts {
+		cluster.Status.Mounts[i].Env = maps.Merge(cluster.Status.Mounts[i].Env, env, c.ExtraEnvs)
+	}
+
+	rt, err := factory.New(cluster, c.ClusterFile.GetRuntimeConfig())
 	if err != nil {
 		return fmt.Errorf("failed to init runtime, %v", err)
 	}
-	c.Runtime = runTime
+	c.Runtime = rt
 	return nil
 }
 
@@ -114,7 +128,7 @@ func (c *CreateProcessor) RunConfig(cluster *v2.Cluster) error {
 func (c *CreateProcessor) MountRootfs(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline MountRootfs in CreateProcessor.")
 	hosts := append(cluster.GetMasterIPAndPortList(), cluster.GetNodeIPAndPortList()...)
-	fs, err := filesystem.NewRootfsMounter(cluster.Status.Mounts)
+	fs, err := rootfs.NewRootfsMounter(cluster.Status.Mounts)
 	if err != nil {
 		return err
 	}
@@ -141,11 +155,7 @@ func (c *CreateProcessor) Init(_ *v2.Cluster) error {
 
 func (c *CreateProcessor) Join(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Join in CreateProcessor.")
-	err := c.Runtime.JoinMasters(cluster.GetMasterIPAndPortList()[1:])
-	if err != nil {
-		return err
-	}
-	err = c.Runtime.JoinNodes(cluster.GetNodeIPAndPortList())
+	err := c.Runtime.ScaleUp(cluster.GetMasterIPAndPortList()[1:], cluster.GetNodeIPAndPortList())
 	if err != nil {
 		return err
 	}
@@ -153,15 +163,19 @@ func (c *CreateProcessor) Join(cluster *v2.Cluster) error {
 	if err != nil {
 		return err
 	}
-	return yaml.MarshalYamlToFile(constants.Clusterfile(cluster.Name), cluster)
+	return yaml.MarshalFile(constants.Clusterfile(cluster.Name), cluster)
 }
 
 func (c *CreateProcessor) RunGuest(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline RunGuest in CreateProcessor.")
-	return c.Guest.Apply(cluster, cluster.Status.Mounts)
+	err := c.Guest.Apply(cluster, cluster.Status.Mounts, cluster.GetAllIPS())
+	if err != nil {
+		return fmt.Errorf("%s: %w", RunGuestFailed, err)
+	}
+	return nil
 }
 
-func NewCreateProcessor(name string, clusterFile clusterfile.Interface) (Interface, error) {
+func NewCreateProcessor(ctx context.Context, name string, clusterFile clusterfile.Interface) (Interface, error) {
 	bder, err := buildah.New(name)
 	if err != nil {
 		return nil, err
@@ -175,5 +189,6 @@ func NewCreateProcessor(name string, clusterFile clusterfile.Interface) (Interfa
 		ClusterFile: clusterFile,
 		Buildah:     bder,
 		Guest:       gs,
+		ExtraEnvs:   GetEnvs(ctx),
 	}, nil
 }

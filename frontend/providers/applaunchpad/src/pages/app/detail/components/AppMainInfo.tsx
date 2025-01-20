@@ -1,49 +1,50 @@
-import React, { useMemo } from 'react';
-import { Box, Flex, Grid, Link } from '@chakra-ui/react';
-import type { AppDetailType } from '@/types/app';
-import PodLineChart from '@/components/PodLineChart';
-import { useCopyData } from '@/utils/tools';
-import dayjs from 'dayjs';
-import { getUserNamespace } from '@/utils/user';
-import { SEALOS_DOMAIN } from '@/store/static';
 import MyIcon from '@/components/Icon';
+import { MyTooltip } from '@sealos/ui';
+
+import PodLineChart from '@/components/PodLineChart';
+import { ProtocolList } from '@/constants/app';
 import { MOCK_APP_DETAIL } from '@/mock/apps';
+import { DOMAIN_PORT } from '@/store/static';
+import type { AppDetailType } from '@/types/app';
+import { useCopyData } from '@/utils/tools';
+import { getUserNamespace } from '@/utils/user';
+import { Box, Button, Center, Flex, Grid, useDisclosure } from '@chakra-ui/react';
+import dayjs from 'dayjs';
+import { useTranslation } from 'next-i18next';
+import { useMemo } from 'react';
+import MonitorModal from './MonitorModal';
 
 const AppMainInfo = ({ app = MOCK_APP_DETAIL }: { app: AppDetailType }) => {
+  const { t } = useTranslation();
   const { copyData } = useCopyData();
-  const inlineNetwork = useMemo(
-    () => `http://${app.appName}.${getUserNamespace()}.svc.cluster.local:${app.containerOutPort}`,
-    [app]
-  );
-  const outlineNetwork = useMemo(
-    () =>
-      app.accessExternal.use
-        ? `https://${
-            app.accessExternal.selfDomain || `${app.accessExternal.outDomain}.${SEALOS_DOMAIN}`
-          }`
-        : '',
-    [app]
-  );
+  const { isOpen, onOpen, onClose } = useDisclosure();
 
-  const cpuUsed = useMemo(
-    () => `${((app.usedCpu[app.usedCpu.length - 1] / app.cpu) * 100).toFixed(2)}%`,
-    [app]
-  );
-  const memoryUsed = useMemo(
-    () => `${((app.usedMemory[app.usedMemory.length - 1] / app.memory) * 100).toFixed(2)}%`,
+  const networks = useMemo(
+    () =>
+      app.networks.map((network) => ({
+        inline: `http://${app.appName}.${getUserNamespace()}.svc.cluster.local:${network.port}`,
+        public: network.openPublicDomain
+          ? `${ProtocolList.find((item) => item.value === network.protocol)?.label}${
+              network.customDomain
+                ? network.customDomain
+                : `${network.publicDomain}.${network.domain}${DOMAIN_PORT}`
+            }`
+          : ''
+      })),
     [app]
   );
 
   return (
     <Box px={6} py={6} position={'relative'}>
       <>
-        <Flex alignItems={'center'}>
-          <MyIcon name={'listen'} w={'14px'} color={'myGray.500'} />
-          <Box ml={3} color={'myGray.600'}>
-            实时监控
+        <Flex alignItems={'center'} fontSize={'12px'} fontWeight={'bold'}>
+          <MyIcon name={'listen'} w={'14px'} color={'grayModern.600'} />
+          <Box ml={'12px'} color={'grayModern.600'}>
+            {t('Real-time Monitoring')}
           </Box>
-          <Box ml={2} color={'myGray.400'}>
-            (更新时间{dayjs().format('hh:mm:ss')})
+          <Box ml={2} color={'grayModern.500'}>
+            ({t('Update Time')}&ensp;
+            {dayjs().format('HH:mm')})
           </Box>
         </Flex>
         <Grid
@@ -51,102 +52,122 @@ const AppMainInfo = ({ app = MOCK_APP_DETAIL }: { app: AppDetailType }) => {
           templateColumns={'1fr 1fr'}
           gap={3}
           mt={2}
-          p={3}
-          backgroundColor={'#F8F8FA'}
-          borderRadius={'sm'}
+          p={'16px'}
+          backgroundColor={'grayModern.50'}
+          borderRadius={'md'}
+          fontSize={'12px'}
+          color={'grayModern.600'}
+          fontWeight={'bold'}
+          position={'relative'}
+          className="driver-detail-monitor"
         >
+          <Button
+            variant={'square'}
+            position={'absolute'}
+            right={'12px'}
+            top={'8px'}
+            onClick={onOpen}
+          >
+            <MyIcon name="enlarge" width={'16px'} fill={'#667085'} />
+          </Button>
           <Box>
-            <Box mb={2} fontSize={'sm'}>
-              CPU&ensp;({cpuUsed})
-            </Box>
+            <Box mb={'4px'}>CPU&ensp;({app.usedCpu.yData[app.usedCpu.yData.length - 1]}%)</Box>
             <Box h={'60px'}>
-              <PodLineChart data={app.usedCpu.slice(-15)} type={'cpu'} cpu={app.cpu} />
+              <PodLineChart type={'blue'} data={app.usedCpu} />
             </Box>
           </Box>
           <Box>
-            <Box mb={2} fontSize={'sm'}>
-              内存&ensp;({memoryUsed})
+            <Box mb={'4px'}>
+              {t('Memory')}&ensp;({app.usedMemory.yData[app.usedMemory.yData.length - 1]}%)
             </Box>
             <Box h={'60px'}>
-              <PodLineChart type="memory" data={app.usedMemory.slice(-15)} />
+              <PodLineChart type={'purple'} data={app.usedMemory} />
             </Box>
           </Box>
         </Grid>
-        <Flex mt={5} alignItems={'center'}>
-          <MyIcon name={'network'} w={'14px'} color={'myGray.500'} />
-          <Box ml={3} color={'myGray.600'}>
-            网络配置
+        <Flex
+          mt={3}
+          alignItems={'center'}
+          fontSize={'12px'}
+          color={'grayModern.600'}
+          fontWeight={'bold'}
+        >
+          <MyIcon name={'network'} w={'14px'} />
+          <Box ml={'12px'}>
+            {t('Network Configuration')}({networks.length})
           </Box>
         </Flex>
-        <Flex mt={2}>
-          <Flex
-            flex={'1 0 0'}
-            w={0}
-            _notLast={{
-              mr: 4
-            }}
-            p={3}
-            backgroundColor={'myWhite.400'}
-            borderRadius={'sm'}
-          >
-            <Box mr={3}>内网地址</Box>
-            <Box flex={'1 0 0'} w={0} color={'myGray.600'}>
-              {inlineNetwork}
-            </Box>
-            <MyIcon
-              cursor={'pointer'}
-              mr={2}
-              name={'copy'}
-              w={'14px'}
-              color={'myGray.400'}
-              _hover={{
-                color: 'hover.iconBlue'
-              }}
-              onClick={() => copyData(inlineNetwork)}
-            />
-          </Flex>
-          <Flex
-            flex={'1 0 0'}
-            w={0}
-            _notLast={{
-              mr: 4
-            }}
-            p={3}
-            backgroundColor={'myWhite.400'}
-            borderRadius={'sm'}
-          >
-            <Box mr={3}>外网地址</Box>
-            {outlineNetwork ? (
-              <>
-                <Link
-                  href={outlineNetwork}
-                  target={'_blank'}
-                  flex={'1 0 0'}
-                  w={0}
-                  color={'myGray.600'}
-                >
-                  {outlineNetwork}
-                </Link>
-                <MyIcon
-                  cursor={'pointer'}
-                  mr={2}
-                  name={'copy'}
-                  w={'14px'}
-                  color={'myGray.400'}
-                  _hover={{
-                    color: 'hover.iconBlue'
-                  }}
-                  onClick={() => copyData(outlineNetwork)}
-                />
-              </>
-            ) : (
-              <Box flex={'1 0 0'} w={0} userSelect={'none'} color={'black'}>
-                未开启
-              </Box>
-            )}
-          </Flex>
+        <Flex mt={'12px'} className="driver-detail-network">
+          <table className={'table-cross'}>
+            <thead>
+              <tr>
+                <Box as={'th'} fontSize={'12px'}>
+                  {t('Private Address')}
+                </Box>
+                <Box as={'th'} fontSize={'12px'}>
+                  {t('Public Address')}
+                </Box>
+              </tr>
+            </thead>
+            <tbody>
+              {networks.map((network, index) => {
+                return (
+                  <tr key={network.inline + index}>
+                    <th>
+                      <Flex>
+                        <MyTooltip label={t('Copy')} placement={'bottom-start'}>
+                          <Box
+                            cursor={'pointer'}
+                            _hover={{ textDecoration: 'underline' }}
+                            onClick={() => copyData(network.inline)}
+                          >
+                            {network.inline}
+                          </Box>
+                        </MyTooltip>
+                      </Flex>
+                    </th>
+                    <th>
+                      <Flex alignItems={'center'} justifyContent={'space-between'}>
+                        <MyTooltip
+                          label={network.public ? t('Open Link') : ''}
+                          placement={'bottom-start'}
+                        >
+                          <Box
+                            className={'textEllipsis'}
+                            {...(network.public
+                              ? {
+                                  cursor: 'pointer',
+                                  _hover: { textDecoration: 'underline' },
+                                  onClick: () => window.open(network.public, '_blank')
+                                }
+                              : {})}
+                          >
+                            {network.public || '-'}
+                          </Box>
+                        </MyTooltip>
+                        {!!network.public && (
+                          <MyIcon
+                            cursor={'pointer'}
+                            mr={2}
+                            name={'copy'}
+                            w={'14px'}
+                            color={'grayModern.500'}
+                            _hover={{
+                              color: 'hover.iconBlue'
+                            }}
+                            onClick={() => copyData(network.public)}
+                          />
+                        )}
+                      </Flex>
+                    </th>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </Flex>
       </>
+      <MonitorModal isOpen={isOpen} onClose={onClose} />
     </Box>
   );
 };

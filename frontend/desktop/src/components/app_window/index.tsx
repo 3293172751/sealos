@@ -1,12 +1,12 @@
 /* eslint-disable jsx-a11y/alt-text */
-/* eslint-disable @next/next/no-img-element */
 import useAppStore from '@/stores/app';
-import useDesktopGlobalConfig from '@/stores/desktop';
-import { Box, Flex } from '@chakra-ui/react';
+import { Box, Flex, Image, Text } from '@chakra-ui/react';
 import clsx from 'clsx';
 import React, { useRef, useState } from 'react';
 import Draggable, { DraggableEventHandler } from 'react-draggable';
 import styles from './index.module.scss';
+import { useTranslation } from 'next-i18next';
+import { useConfigStore } from '@/stores/config';
 
 export default function AppWindow(props: {
   style?: React.CSSProperties;
@@ -14,7 +14,6 @@ export default function AppWindow(props: {
   children: any;
 }) {
   const { pid } = props;
-  const desktopHeight = useDesktopGlobalConfig((state) => state.desktopHeight);
   const {
     closeAppById,
     updateOpenedAppInfo,
@@ -24,6 +23,8 @@ export default function AppWindow(props: {
     findAppInfoById,
     maxZIndex
   } = useAppStore();
+  const logo = useConfigStore().layoutConfig?.logo;
+  const { t, i18n } = useTranslation();
   const wnapp = findAppInfoById(pid);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const dragDom = useRef<HTMLDivElement>(null);
@@ -32,6 +33,11 @@ export default function AppWindow(props: {
 
   const handleDragBoundary: DraggableEventHandler = (e, position) => {
     const { x, y } = position;
+    const desktopHeight = document.getElementById('desktop')?.clientHeight;
+    if (!desktopHeight) {
+      setPosition({ x: 0, y: 0 });
+      return;
+    }
     const appHeaderHeight = dragDom.current?.querySelector('.windowHeader')?.clientHeight || 30;
     const appHeaderWidth = dragDom.current?.querySelector('.windowHeader')?.clientWidth || 3000;
 
@@ -41,10 +47,10 @@ export default function AppWindow(props: {
       setPosition({
         x:
           x < 0
-            ? x < -1.1 * appHeaderWidth // (0.8width + width/0.6*0.2)
+            ? x < -0.9 * appHeaderWidth // (0.8width + width/0.70*0.15)
               ? 0
               : x
-            : x > 1.1 * appHeaderWidth
+            : x > 0.9 * appHeaderWidth
             ? 0
             : x,
         y: y < upperBoundary ? upperBoundary : y > lowerBoundary ? 0 : y
@@ -86,9 +92,12 @@ export default function AppWindow(props: {
         <Flex
           cursor={'pointer'}
           h="28px"
-          background={'#F7F8FA'}
+          background={'grayModern.100'}
           className={'windowHeader'}
           borderRadius={'6px 6px 0 0'}
+          onClick={() => {
+            setToHighestLayerById(pid);
+          }}
           onDoubleClick={(e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -100,11 +109,33 @@ export default function AppWindow(props: {
             setPosition({ x: 0, y: 0 });
           }}
         >
-          <Flex ml="16px" alignItems={'center'}>
-            <img src={wnapp?.icon} alt={wnapp?.name} width={14} />
-            <Box ml="8px" color={wnapp?.menuData?.nameColor} fontSize={'12px'} fontWeight={400}>
-              {wnapp?.name}
+          <Flex ml="16px" alignItems={'center'} fontSize={'12px'} fontWeight={400}>
+            <Image
+              src={wnapp?.icon}
+              fallbackSrc={logo}
+              alt={wnapp?.name}
+              width={'20px'}
+              height={'20px'}
+            />
+            <Box ml="8px" fontSize={'12px'} fontWeight={400}>
+              {wnapp?.i18n?.[i18n?.language]?.name
+                ? wnapp.i18n?.[i18n?.language]?.name
+                : wnapp?.name}
             </Box>
+            {wnapp?.menuData &&
+              wnapp?.menuData?.length > 0 &&
+              wnapp?.menuData?.map((item) => (
+                <Text
+                  key={item.name}
+                  color={'#24282C'}
+                  ml="16px"
+                  onClick={() => {
+                    typeof item?.link === 'string' && window.open(item?.link);
+                  }}
+                >
+                  {item.name}
+                </Text>
+              ))}
           </Flex>
           <Flex ml={'auto'}>
             <Box
@@ -119,24 +150,33 @@ export default function AppWindow(props: {
                 });
               }}
             >
-              <img src="/icons/minimize.png" width={12} />
+              <Image
+                src="/icons/minimize.png"
+                fallbackSrc={logo}
+                alt={wnapp?.name}
+                width={'12px'}
+                height={'12px'}
+              />
             </Box>
             <Box
               className={styles.uicon}
               onClick={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
+                setPosition({ x: 0, y: 0 });
                 updateOpenedAppInfo({
                   ...wnapp,
                   size: wnapp?.size === 'maxmin' ? 'maximize' : 'maxmin',
                   cacheSize: wnapp?.size === 'maxmin' ? 'maximize' : 'maxmin'
                 });
-                setPosition({ x: 0, y: 0 });
               }}
             >
-              <img
+              <Image
                 src={wnapp.size === 'maximize' ? '/icons/maximize.png' : '/icons/maxmin.png'}
-                width={12}
+                fallbackSrc={logo}
+                alt={wnapp?.name}
+                width={'12px'}
+                height={'12px'}
               />
             </Box>
             <Box
@@ -152,7 +192,13 @@ export default function AppWindow(props: {
                 closeAppById(currentAppPid);
               }}
             >
-              <img src={'/icons/close.png'} width={12} />
+              <Image
+                src={'/icons/close.png'}
+                fallbackSrc={logo}
+                alt={wnapp?.name}
+                width={'12px'}
+                height={'12px'}
+              />
             </Box>
           </Flex>
         </Flex>
@@ -166,6 +212,7 @@ export default function AppWindow(props: {
         ></div>
         {/* app window content */}
         <Flex flexGrow={1} overflow={'hidden'} borderRadius={'0 0 6px 6px'} position={'relative'}>
+          {/* Drag necessary to improve fluency */}
           {dragging && (
             <Box
               position={'absolute'}

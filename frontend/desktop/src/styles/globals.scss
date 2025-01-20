@@ -7,29 +7,34 @@
 html,
 body,
 #__next {
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
 }
 
 iframe {
   border: none;
 }
+
 ::-webkit-scrollbar,
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
   border-radius: 8px;
 }
+
 ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-track {
   background: transparent;
   border-radius: 6px;
 }
+
 ::-webkit-scrollbar-thumb,
 ::-webkit-scrollbar-thumb {
   background: #6a6969;
   border-radius: 6px;
 }
+
 ::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:hover {
   background: #999;
@@ -45,4 +50,35 @@ iframe {
   vertical-align: -0.15em;
   fill: currentColor;
   overflow: hidden;
+}
+
+input:-webkit-autofill {
+  background-image: none;
+  color: #000;
+}
+
+div {
+  &::-webkit-scrollbar-thumb,
+  &::-webkit-scrollbar-thumb {
+    background: transparent !important;
+    border-radius: 10px;
+    transition: 1s;
+  }
+
+  &:hover {
+    &::-webkit-scrollbar-thumb,
+    &::-webkit-scrollbar-thumb {
+      background: rgba(189, 193, 197, 0.5) !important;
+    }
+
+    &::-webkit-scrollbar-thumb:hover,
+    &::-webkit-scrollbar-thumb:hover {
+      background: rgba(189, 193, 197, 1) !important;
+    }
+  }
+}
+
+#driver-popover-content {
+  padding: 14px;
+  border: 1px solid #94b5ff;
 }

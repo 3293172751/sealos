@@ -29,15 +29,6 @@ spec:
   selector:
     app: desktop-frontend
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: desktop-frontend-config
-  namespace: sealos
-data:
-  config.yaml: |-
-    addr: :3000
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -48,13 +39,30 @@ spec:
     matchLabels:
       app: desktop-frontend
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
   template:
     metadata:
       labels:
         app: desktop-frontend
     spec:
       serviceAccountName: desktop-frontend
+      initContainers:
+        - name: init-database
+          image: ghcr.io/labring/sealos-desktop-frontend:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              export REGION_DATABASE_URL=$(cat /app/data/config.yaml | awk '/regionalCockroachdbURI:/ {print $2}' | tr -d '"')
+              export GLOBAL_DATABASE_URL=$(cat /app/data/config.yaml | awk '/globalCockroachdbURI:/ {print $2}' | tr -d '"')
+              prisma migrate deploy --schema /app/desktop/prisma/global/schema.prisma
+              prisma migrate deploy --schema /app/desktop/prisma/region/schema.prisma
+          volumeMounts:
+            - mountPath: /app/data/config.yaml
+              name: desktop-frontend-volume
+              subPath: config.yaml
       containers:
         - name: desktop-frontend
           securityContext:
@@ -64,24 +72,46 @@ spec:
             capabilities:
               drop:
                 - "ALL"
-          image: ghcr.io/labring/sealos-desktop-frontend:dev
-          imagePullPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              REGION_DATABASE_URL=$(cat /app/data/config.yaml | awk '/regionalCockroachdbURI:/ {print $2}' | tr -d '"') \
+              GLOBAL_DATABASE_URL=$(cat /app/data/config.yaml | awk '/globalCockroachdbURI:/ {print $2}' | tr -d '"') \
+              node /app/desktop/server.js
+          readinessProbe:
+            httpGet:
+              path: /api/platform/getAppConfig
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            timeoutSeconds: 2
+            successThreshold: 3
+            failureThreshold: 3
+          image: ghcr.io/labring/sealos-desktop-frontend:latest
+          imagePullPolicy: IfNotPresent
           volumeMounts:
-            - name: desktop-frontend-volume
-              mountPath: /config.yaml
+            - mountPath: /app/data/config.yaml
+              name: desktop-frontend-volume
               subPath: config.yaml
           resources:
             limits:
-              cpu: 1000m
-              memory: 512Mi
+              cpu: 2000m
+              memory: 2048Mi
             requests:
               cpu: 100m
               memory: 128Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: "app"
+                      operator: In
+                      values:
+                        - desktop-frontend
+                topologyKey: "kubernetes.io/hostname"
       volumes:
         - name: desktop-frontend-volume
           configMap:

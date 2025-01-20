@@ -26,15 +26,10 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/labring/sealos/pkg/utils/exec"
 	"github.com/labring/sealos/pkg/utils/logger"
 )
 
 func (c *Client) Ping(host string) error {
-	if c.isLocalAction(host) {
-		logger.Debug("host %s is local, ping is always true", host)
-		return nil
-	}
 	client, _, err := c.Connect(host)
 	if err != nil {
 		return fmt.Errorf("failed to connect %s: %v", host, err)
@@ -42,22 +37,20 @@ func (c *Client) Ping(host string) error {
 	return client.Close()
 }
 
-// wrapCommands just placeholder for now
 func (c *Client) wrapCommands(cmds ...string) string {
+	cmdJoined := strings.Join(cmds, "; ")
 	if !c.Option.sudo || c.Option.user == defaultUsername {
-		return strings.Join(cmds, "; ")
+		return cmdJoined
 	}
-	// run as user provided and set HOME env, then run `bash -c` in a sub-shell
-	return fmt.Sprintf("sudo -u %s -H bash -c '%s'", c.Option.user, strings.Join(cmds, "; "))
+
+	// Escape single quotes in cmd, fix https://github.com/labring/sealos/issues/4424
+	// e.g. echo 'hello world' -> `sudo -E /bin/bash -c 'echo "hello world"'`
+	cmdEscaped := strings.ReplaceAll(cmdJoined, `'`, `"`)
+	return fmt.Sprintf("sudo -E /bin/bash -c '%s'", cmdEscaped)
 }
 
-// CmdAsync not actually asynchronously, just print output asynchronously
-func (c *Client) CmdAsync(host string, cmds ...string) error {
+func (c *Client) CmdAsyncWithContext(ctx context.Context, host string, cmds ...string) error {
 	cmd := c.wrapCommands(cmds...)
-	if c.isLocalAction(host) {
-		logger.Debug("start to run command `%s` via exec", cmd)
-		return exec.Cmd("bash", "-c", cmd)
-	}
 	logger.Debug("start to exec `%s` on %s", cmd, host)
 	client, session, err := c.Connect(host)
 	if err != nil {
@@ -86,25 +79,39 @@ func (c *Client) CmdAsync(host string, cmds ...string) error {
 	eg.Go(func() error { return c.handlePipe(host, stderr, &out, c.stdout) })
 	eg.Go(func() error { return c.handlePipe(host, stdout, &out, c.stdout) })
 
-	if err := session.Start(cmd); err != nil {
-		return fmt.Errorf("start command `%s` on %s: %v", cmd, host, err)
-	}
-	if err = eg.Wait(); err != nil {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- func() error {
+			if err := session.Start(cmd); err != nil {
+				return fmt.Errorf("start command `%s` on %s: %v", cmd, host, err)
+			}
+			if err = eg.Wait(); err != nil {
+				return err
+			}
+			if err = session.Wait(); err != nil {
+				return fmt.Errorf("run command `%s` on %s, output: %s, error: %v,", cmd, host, out.b.String(), err)
+			}
+			return nil
+		}()
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err = <-errCh:
 		return err
 	}
-	if err = session.Wait(); err != nil {
-		return fmt.Errorf("run command `%s` on %s, output: %s, error: %v,", cmd, host, out.b.String(), err)
-	}
-	return nil
+}
+
+// CmdAsync not actually asynchronously, just print output asynchronously
+func (c *Client) CmdAsync(host string, cmds ...string) error {
+	ctx, cancel := GetTimeoutContext()
+	defer cancel()
+	return c.CmdAsyncWithContext(ctx, host, cmds...)
 }
 
 func (c *Client) Cmd(host, cmd string) ([]byte, error) {
 	cmd = c.wrapCommands(cmd)
-	if c.isLocalAction(host) {
-		logger.Debug("host %s is local, command via exec", host)
-		d, err := exec.RunBashCmd(cmd)
-		return []byte(d), err
-	}
+	logger.Debug("start to exec `%s` on %s", cmd, host)
 	client, session, err := c.Connect(host)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ssh session for %s: %v", host, err)

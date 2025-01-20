@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/labring/sealos/controllers/user/controllers/helper/kubeconfig"
+
 	csrv1 "k8s.io/api/certificates/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -29,9 +31,9 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	v1 "github.com/labring/sealos/controllers/user/api/v1"
-	"github.com/labring/sealos/controllers/user/controllers/helper"
 	"k8s.io/client-go/tools/clientcmd"
+
+	v1 "github.com/labring/sealos/controllers/user/api/v1"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -68,6 +70,9 @@ var _ = BeforeSuite(func() {
 	Expect(cfg).NotTo(BeNil())
 
 	err = csrv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = v1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	//+kubebuilder:scaffold:scheme
@@ -135,12 +140,8 @@ users:
 			user.Name = "cuisongliu"
 			defaultExpirationDuration := int32(100000000)
 			user.Spec.CSRExpirationSeconds = defaultExpirationDuration
-			c := &helper.Config{
-				User:              user.Name,
-				ExpirationSeconds: user.Spec.CSRExpirationSeconds,
-			}
-
-			config, err := helper.NewGenerate(c).KubeConfig(cfg, k8sClient)
+			defaultConfig := kubeconfig.NewConfig("cuisongliu", "", 100000000)
+			config, err := defaultConfig.WithServiceAccountConfig("default", nil).Apply(cfg, k8sClient)
 			Expect(err).To(BeNil())
 			kubeData, err := clientcmd.Write(*config)
 			Expect(err).To(BeNil())

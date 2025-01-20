@@ -59,7 +59,8 @@ ifeq ($(origin PLATFORM), undefined)
 endif
 
 # Linux command settings
-CODE_DIRS := $(ROOT_DIR)/pkg $(ROOT_DIR)/cmd $(ROOT_DIR)/test $(ROOT_DIR)/staging
+STAGING_DIR := $(ROOT_DIR)/staging/src/github.com/labring
+CODE_DIRS := $(ROOT_DIR)/pkg $(ROOT_DIR)/cmd $(ROOT_DIR)/controllers $(STAGING_DIR)/image-cri-shim $(STAGING_DIR)/lvscare
 FIND := find $(CODE_DIRS)
 
 # verbose settings

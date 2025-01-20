@@ -17,16 +17,22 @@ limitations under the License.
 package cmd
 
 import (
+	sregcmd "github.com/labring/sreg/pkg/registry/commands"
 	"github.com/spf13/cobra"
 
 	"github.com/labring/sealos/pkg/registry/commands"
 )
 
-func newRegistryCmd() *cobra.Command {
-	var registryImageCmd = &cobra.Command{
+func newRegistryCmd(examplePrefix string) *cobra.Command {
+	var cmd = &cobra.Command{
 		Use:   "registry",
-		Short: "registry images manager",
+		Short: "registry related",
 	}
-	commands.RegisterRootCommand(registryImageCmd, rootCmd)
-	return registryImageCmd
+	examplePrefix = examplePrefix + " registry"
+	cmd.AddCommand(commands.NewRegistryPasswdCmd())
+	cmd.AddCommand(sregcmd.NewServeRegistryCommand())
+	cmd.AddCommand(sregcmd.NewRegistryImageSaveCmd(examplePrefix))
+	cmd.AddCommand(sregcmd.NewSyncRegistryCommand(examplePrefix))
+	cmd.AddCommand(sregcmd.NewCopyRegistryCommand(examplePrefix))
+	return cmd
 }

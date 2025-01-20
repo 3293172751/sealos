@@ -18,22 +18,57 @@ import type {
   AppDetailType,
   PodMetrics,
   PodEvent,
-  HpaTarget
+  HpaTarget,
+  ProtocolType,
+  TAppSource,
+  TAppSourceType
 } from '@/types/app';
 import {
   appStatusMap,
   podStatusMap,
   pauseKey,
   maxReplicasKey,
-  minReplicasKey
+  minReplicasKey,
+  PodStatusEnum,
+  publicDomainKey,
+  gpuNodeSelectorKey,
+  gpuResourceKey,
+  AppSourceConfigs
 } from '@/constants/app';
 import { cpuFormatToM, memoryFormatToMi, formatPodTime, atobSecretYaml } from '@/utils/tools';
 import type { DeployKindsType, AppEditType } from '@/types/app';
 import { defaultEditVal } from '@/constants/editApp';
 import { customAlphabet } from 'nanoid';
-import { SEALOS_DOMAIN } from '@/store/static';
+import { getInitData } from '@/api/platform';
+import { has } from 'lodash';
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz', 12);
+
+export const getAppSource = (
+  app: V1Deployment | V1StatefulSet
+): {
+  hasSource: boolean;
+  sourceName: string;
+  sourceType: TAppSourceType;
+} => {
+  const labels = app.metadata?.labels || {};
+
+  for (const config of AppSourceConfigs) {
+    if (has(labels, config.key)) {
+      return {
+        hasSource: true,
+        sourceName: labels[config.key],
+        sourceType: config.type
+      };
+    }
+  }
+
+  return {
+    hasSource: false,
+    sourceName: '',
+    sourceType: 'app_store'
+  };
+};
 
 export const adaptAppListItem = (app: V1Deployment & V1StatefulSet): AppListItemType => {
   // compute store amount
@@ -43,38 +78,103 @@ export const adaptAppListItem = (app: V1Deployment & V1StatefulSet): AppListItem
         0
       )
     : 0;
+
+  const gpuNodeSelector = app?.spec?.template?.spec?.nodeSelector;
+
   return {
     id: app.metadata?.uid || ``,
     name: app.metadata?.name || 'app name',
-    status: appStatusMap.running,
+    status: appStatusMap.waiting,
     isPause: !!app?.metadata?.annotations?.[pauseKey],
-    createTime: dayjs(app.metadata?.creationTimestamp).format('YYYY/MM/DD hh:mm'),
+    createTime: dayjs(app.metadata?.creationTimestamp).format('YYYY/MM/DD HH:mm'),
     cpu: cpuFormatToM(app.spec?.template?.spec?.containers?.[0]?.resources?.limits?.cpu || '0'),
     memory: memoryFormatToMi(
       app.spec?.template?.spec?.containers?.[0]?.resources?.limits?.memory || '0'
     ),
-    usedCpu: new Array(30).fill(0),
-    useMemory: new Array(30).fill(0),
+    gpu: {
+      type: gpuNodeSelector?.[gpuNodeSelectorKey] || '',
+      amount: Number(
+        app.spec?.template?.spec?.containers?.[0]?.resources?.limits?.[gpuResourceKey] || 1
+      ),
+      manufacturers: 'nvidia'
+    },
+    usedCpu: {
+      name: '',
+      xData: new Array(30).fill(0),
+      yData: new Array(30).fill('0')
+    },
+    usedMemory: {
+      name: '',
+      xData: new Array(30).fill(0),
+      yData: new Array(30).fill('0')
+    },
     activeReplicas: app.status?.readyReplicas || 0,
     maxReplicas: +(app.metadata?.annotations?.[maxReplicasKey] || app.status?.readyReplicas || 0),
     minReplicas: +(app.metadata?.annotations?.[minReplicasKey] || app.status?.readyReplicas || 0),
-    storeAmount
+    storeAmount,
+    labels: app.metadata?.labels || {},
+    source: getAppSource(app)
   };
 };
 
 export const adaptPod = (pod: V1Pod): PodDetailType => {
-  // console.log(pod);
   return {
     ...pod,
     podName: pod.metadata?.name || 'pod name',
-    // @ts-ignore
-    status: podStatusMap[pod.status?.phase] || podStatusMap.Failed,
+    status: (() => {
+      const container = pod.status?.containerStatuses || [];
+      if (container.length > 0) {
+        const stateObj = container[0].state;
+        if (stateObj) {
+          const status = [
+            PodStatusEnum.running,
+            PodStatusEnum.terminated,
+            PodStatusEnum.waiting
+          ].find((s) => stateObj[s]);
+
+          if (status) {
+            return status === PodStatusEnum.running
+              ? podStatusMap[PodStatusEnum.running]
+              : { ...podStatusMap[status], ...stateObj[status] };
+          }
+        }
+      }
+      return podStatusMap.waiting;
+    })(),
+    containerStatus: (() => {
+      const container = pod.status?.containerStatuses || [];
+      if (container.length > 0) {
+        const lastStateObj = container[0].lastState;
+        if (lastStateObj) {
+          const status = [
+            PodStatusEnum.running,
+            PodStatusEnum.terminated,
+            PodStatusEnum.waiting
+          ].find((s) => lastStateObj[s]);
+
+          if (status) {
+            return status === PodStatusEnum.running
+              ? podStatusMap[PodStatusEnum.running]
+              : { ...podStatusMap[status], ...lastStateObj[status] };
+          }
+        }
+      }
+      return podStatusMap.waiting;
+    })(),
     nodeName: pod.spec?.nodeName || 'node name',
     ip: pod.status?.podIP || 'pod ip',
     restarts: pod.status?.containerStatuses ? pod.status?.containerStatuses[0].restartCount : 0,
     age: formatPodTime(pod.metadata?.creationTimestamp),
-    usedCpu: new Array(30).fill(0),
-    usedMemory: new Array(30).fill(0),
+    usedCpu: {
+      name: '',
+      xData: new Array(30).fill(0),
+      yData: new Array(30).fill('0')
+    },
+    usedMemory: {
+      name: '',
+      xData: new Array(30).fill(0),
+      yData: new Array(30).fill('0')
+    },
     cpu: cpuFormatToM(pod.spec?.containers?.[0]?.resources?.limits?.cpu || '0'),
     memory: memoryFormatToMi(pod.spec?.containers?.[0]?.resources?.limits?.memory || '0')
   };
@@ -121,16 +221,17 @@ export enum YamlKindEnum {
   PersistentVolumeClaim = 'PersistentVolumeClaim'
 }
 
-export const adaptAppDetail = (configs: DeployKindsType[]): AppDetailType => {
+export const adaptAppDetail = async (configs: DeployKindsType[]): Promise<AppDetailType> => {
+  const { SEALOS_DOMAIN, SEALOS_USER_DOMAINS } = await getInitData();
   const deployKindsMap: {
     [YamlKindEnum.StatefulSet]?: V1StatefulSet;
     [YamlKindEnum.Deployment]?: V1Deployment;
     [YamlKindEnum.Service]?: V1Service;
     [YamlKindEnum.ConfigMap]?: V1ConfigMap;
-    [YamlKindEnum.Ingress]?: V1Ingress;
     [YamlKindEnum.HorizontalPodAutoscaler]?: V2HorizontalPodAutoscaler;
     [YamlKindEnum.Secret]?: V1Secret;
   } = {};
+
   configs.forEach((item) => {
     if (item.kind) {
       // @ts-ignore
@@ -144,22 +245,41 @@ export const adaptAppDetail = (configs: DeployKindsType[]): AppDetailType => {
     throw new Error('获取APP异常');
   }
 
-  const domain = deployKindsMap?.Ingress?.spec?.rules?.[0].host;
-  const sealosDomain =
-    deployKindsMap?.Ingress?.metadata?.labels?.[`${SEALOS_DOMAIN}/app-deploy-manager-domain`];
+  const useGpu = !!Number(
+    appDeploy.spec?.template?.spec?.containers?.[0]?.resources?.limits?.[gpuResourceKey]
+  );
+  const gpuNodeSelector = useGpu ? appDeploy?.spec?.template?.spec?.nodeSelector : null;
+
+  const getFilteredVolumeMounts = () => {
+    const volumeMounts = appDeploy?.spec?.template?.spec?.containers?.[0]?.volumeMounts || [];
+    const configMapKeys = Object.keys(deployKindsMap.ConfigMap?.data || {});
+    const storeNames =
+      deployKindsMap.StatefulSet?.spec?.volumeClaimTemplates?.map(
+        (template) => template.metadata?.name
+      ) || [];
+
+    return volumeMounts.filter(
+      (mount) => !configMapKeys.includes(mount.name) && !storeNames.includes(mount.name)
+    );
+  };
 
   return {
+    labels: appDeploy?.metadata?.labels || {},
+    crYamlList: configs,
     id: appDeploy.metadata?.uid || ``,
     appName: appDeploy.metadata?.name || 'app Name',
-    createTime: dayjs(appDeploy.metadata?.creationTimestamp).format('YYYY-MM-DD hh:mm'),
-    status: appStatusMap.running,
+    createTime: dayjs(appDeploy.metadata?.creationTimestamp).format('YYYY-MM-DD HH:mm'),
+    status: appStatusMap.waiting,
     isPause: !!appDeploy?.metadata?.annotations?.[pauseKey],
     imageName:
       appDeploy?.metadata?.annotations?.originImageName ||
       appDeploy.spec?.template?.spec?.containers?.[0]?.image ||
       '',
     runCMD: appDeploy.spec?.template?.spec?.containers?.[0]?.command?.join(' ') || '',
-    cmdParam: appDeploy.spec?.template?.spec?.containers?.[0]?.args?.join(' ') || '',
+    cmdParam:
+      (appDeploy.spec?.template?.spec?.containers?.[0]?.args?.length === 1
+        ? appDeploy.spec?.template?.spec?.containers?.[0]?.args.join(' ')
+        : JSON.stringify(appDeploy.spec?.template?.spec?.containers?.[0]?.args)) || '',
     replicas: appDeploy.spec?.replicas || 0,
     cpu: cpuFormatToM(
       appDeploy.spec?.template?.spec?.containers?.[0]?.resources?.limits?.cpu || '0'
@@ -167,34 +287,84 @@ export const adaptAppDetail = (configs: DeployKindsType[]): AppDetailType => {
     memory: memoryFormatToMi(
       appDeploy.spec?.template?.spec?.containers?.[0]?.resources?.limits?.memory || '0'
     ),
-    usedCpu: new Array(30).fill(0),
-    usedMemory: new Array(30).fill(0),
-    containerOutPort:
-      appDeploy.spec?.template?.spec?.containers?.[0]?.ports?.[0]?.containerPort || 0,
+    gpu: {
+      type: gpuNodeSelector?.[gpuNodeSelectorKey] || '',
+      amount: Number(
+        appDeploy.spec?.template?.spec?.containers?.[0]?.resources?.limits?.[gpuResourceKey] || 1
+      ),
+      manufacturers: 'nvidia'
+    },
+    usedCpu: {
+      name: '',
+      xData: new Array(30).fill(0),
+      yData: new Array(30).fill('0')
+    },
+    usedMemory: {
+      name: '',
+      xData: new Array(30).fill(0),
+      yData: new Array(30).fill('0')
+    },
     envs:
-      appDeploy.spec?.template?.spec?.containers?.[0]?.env?.map((env) => ({
-        key: env.name,
-        value: env.value || ''
-      })) || [],
-    accessExternal: deployKindsMap.Ingress
-      ? {
-          use: true,
-          backendProtocol: deployKindsMap.Ingress.metadata?.annotations?.[
-            'nginx.ingress.kubernetes.io/backend-protocol'
-          ] as AppEditType['accessExternal']['backendProtocol'],
-          outDomain: sealosDomain ? sealosDomain : nanoid(),
-          selfDomain: SEALOS_DOMAIN && domain?.endsWith(SEALOS_DOMAIN) ? '' : domain || ''
-        }
-      : defaultEditVal.accessExternal,
+      appDeploy.spec?.template?.spec?.containers?.[0]?.env?.map((env) => {
+        return {
+          key: env.name,
+          value: env.value || '',
+          valueFrom: env.valueFrom
+        };
+      }) || [],
+    networks:
+      deployKindsMap.Service?.spec?.ports?.map((item) => {
+        const ingress = configs.find(
+          (config: any) =>
+            config.kind === YamlKindEnum.Ingress &&
+            config?.spec?.rules?.[0]?.http?.paths?.[0]?.backend?.service?.port?.number === item.port
+        ) as V1Ingress;
+        const domain = ingress?.spec?.rules?.[0].host || '';
+
+        const backendProtocol = ingress?.metadata?.annotations?.[
+          'nginx.ingress.kubernetes.io/backend-protocol'
+        ] as ProtocolType;
+
+        const protocol =
+          backendProtocol ?? (item.protocol === 'TCP' ? 'HTTP' : (item.protocol as ProtocolType));
+
+        const isCustomDomain =
+          !domain.endsWith(SEALOS_DOMAIN) &&
+          !SEALOS_USER_DOMAINS.some((item) => domain.endsWith(item.name));
+
+        return {
+          networkName: ingress?.metadata?.name || '',
+          portName: item.name || '',
+          port: item.port,
+          protocol: protocol,
+          openPublicDomain: !!ingress,
+          publicDomain: isCustomDomain
+            ? ingress?.metadata?.labels?.[publicDomainKey] || ''
+            : domain.split('.')[0],
+          customDomain: isCustomDomain ? domain : '',
+          domain: isCustomDomain
+            ? SEALOS_DOMAIN
+            : domain.split('.').slice(1).join('.') || SEALOS_DOMAIN
+        };
+      }) || [],
     hpa: deployKindsMap.HorizontalPodAutoscaler?.spec
       ? {
           use: true,
           target:
-            (deployKindsMap.HorizontalPodAutoscaler.spec.metrics?.[0]?.resource
-              ?.name as HpaTarget) || 'cpu',
-          value:
-            deployKindsMap.HorizontalPodAutoscaler.spec.metrics?.[0]?.resource?.target
-              ?.averageUtilization || 50,
+            deployKindsMap.HorizontalPodAutoscaler.spec.metrics?.[0]?.pods?.metric?.name ===
+            'DCGM_FI_DEV_GPU_UTIL'
+              ? 'gpu'
+              : (deployKindsMap.HorizontalPodAutoscaler.spec.metrics?.[0]?.resource
+                  ?.name as HpaTarget) || 'cpu',
+          value: (() => {
+            const metrics = deployKindsMap.HorizontalPodAutoscaler.spec.metrics?.[0];
+            if (metrics?.pods?.metric?.name === 'DCGM_FI_DEV_GPU_UTIL') {
+              return Number(metrics.pods.target?.averageValue) || 50;
+            }
+            return metrics?.resource?.target?.averageUtilization
+              ? metrics.resource.target.averageUtilization / 10
+              : 50;
+          })(),
           minReplicas: deployKindsMap.HorizontalPodAutoscaler.spec.minReplicas || 3,
           maxReplicas: deployKindsMap.HorizontalPodAutoscaler.spec.maxReplicas || 10
         }
@@ -211,10 +381,16 @@ export const adaptAppDetail = (configs: DeployKindsType[]): AppDetailType => {
     secret: atobSecretYaml(deployKindsMap?.Secret?.data?.['.dockerconfigjson']),
     storeList: deployKindsMap.StatefulSet?.spec?.volumeClaimTemplates
       ? deployKindsMap.StatefulSet?.spec?.volumeClaimTemplates.map((item) => ({
+          name: item.metadata?.name || '',
           path: item.metadata?.annotations?.path || '',
           value: Number(item.metadata?.annotations?.value || 0)
         }))
-      : []
+      : [],
+    volumeMounts: getFilteredVolumeMounts(),
+    // keep original non-configMap type volumes
+    volumes: appDeploy?.spec?.template?.spec?.volumes?.filter((volume) => !volume.configMap) || [],
+    kind: appDeploy?.kind?.toLowerCase() as 'deployment' | 'statefulset',
+    source: getAppSource(appDeploy)
   };
 };
 
@@ -227,14 +403,19 @@ export const adaptEditAppData = (app: AppDetailType): AppEditType => {
     'replicas',
     'cpu',
     'memory',
-    'containerOutPort',
-    'accessExternal',
+    'networks',
     'envs',
     'hpa',
     'configMapList',
     'secret',
-    'storeList'
+    'storeList',
+    'gpu',
+    'labels',
+    'kind',
+    'volumes',
+    'volumeMounts'
   ];
+
   const res: Record<string, any> = {};
 
   keys.forEach((key) => {
@@ -243,87 +424,19 @@ export const adaptEditAppData = (app: AppDetailType): AppEditType => {
   return res as AppEditType;
 };
 
-// yaml file adapt to edit form
-export const adaptYamlToEdit = (yamlList: string[]) => {
-  const configs = yamlList.map((item) => yaml.loadAll(item) as DeployKindsType).flat();
+export const sliderNumber2MarkList = ({
+  val,
+  type,
+  gpuAmount = 1
+}: {
+  val: number[];
+  type: 'cpu' | 'memory';
+  gpuAmount?: number;
+}) => {
+  const newVal = val.map((item) => item);
 
-  const deployKindsMap: {
-    [YamlKindEnum.Deployment]?: V1Deployment;
-    [YamlKindEnum.Service]?: V1Service;
-    [YamlKindEnum.ConfigMap]?: V1ConfigMap;
-    [YamlKindEnum.Ingress]?: V1Ingress;
-    [YamlKindEnum.HorizontalPodAutoscaler]?: V2HorizontalPodAutoscaler;
-    [YamlKindEnum.Secret]?: V1Secret;
-  } = {};
-
-  configs.forEach((item) => {
-    if (item.kind) {
-      // @ts-ignore
-      deployKindsMap[item.kind] = item;
-    }
-  });
-
-  const domain = deployKindsMap?.Ingress?.spec?.rules?.[0].host;
-  const cpuStr =
-    deployKindsMap?.Deployment?.spec?.template?.spec?.containers?.[0]?.resources?.requests?.cpu;
-  const memoryStr =
-    deployKindsMap?.Deployment?.spec?.template?.spec?.containers?.[0]?.resources?.requests?.memory;
-
-  const res: Record<string, any> = {
-    imageName: deployKindsMap?.Deployment?.spec?.template?.spec?.containers?.[0]?.image,
-    runCMD:
-      deployKindsMap?.Deployment?.spec?.template?.spec?.containers?.[0]?.command?.join(' ') || '',
-    cmdParam:
-      deployKindsMap?.Deployment?.spec?.template?.spec?.containers?.[0]?.args?.join(' ') || '',
-    replicas: deployKindsMap?.Deployment?.spec?.replicas,
-    cpu: cpuStr ? cpuFormatToM(cpuStr) : undefined,
-    memory: memoryStr ? memoryFormatToMi(memoryStr) : undefined,
-    accessExternal: deployKindsMap?.Ingress
-      ? {
-          use: true,
-          outDomain: domain?.split('.')[0],
-          selfDomain: domain
-        }
-      : undefined,
-    containerOutPort:
-      deployKindsMap?.Deployment?.spec?.template?.spec?.containers?.[0]?.ports?.[0]?.containerPort,
-    envs:
-      deployKindsMap?.Deployment?.spec?.template?.spec?.containers?.[0]?.env?.map((env) => ({
-        key: env.name,
-        value: env.value
-      })) || undefined,
-    hpa: deployKindsMap.HorizontalPodAutoscaler?.spec
-      ? {
-          use: true,
-          target:
-            (deployKindsMap.HorizontalPodAutoscaler.spec.metrics?.[0]?.resource
-              ?.name as HpaTarget) || 'cpu',
-          value:
-            deployKindsMap.HorizontalPodAutoscaler.spec.metrics?.[0]?.resource?.target
-              ?.averageUtilization || 50,
-          minReplicas: deployKindsMap.HorizontalPodAutoscaler.spec?.maxReplicas,
-          maxReplicas: deployKindsMap.HorizontalPodAutoscaler.spec?.minReplicas
-        }
-      : undefined,
-    configMapList: deployKindsMap?.ConfigMap?.data
-      ? Object.entries(deployKindsMap?.ConfigMap.data).map(([key, value]) => ({
-          mountPath: key,
-          value
-        }))
-      : undefined,
-    secret: deployKindsMap.Secret
-      ? {
-          ...defaultEditVal.secret,
-          use: true
-        }
-      : undefined
-  };
-
-  for (const key in res) {
-    if (res[key] === undefined) {
-      delete res[key];
-    }
-  }
-
-  return res;
+  return newVal.map((item) => ({
+    label: type === 'memory' ? (item >= 1024 ? `${item / 1024} G` : `${item} M`) : `${item / 1000}`,
+    value: item
+  }));
 };

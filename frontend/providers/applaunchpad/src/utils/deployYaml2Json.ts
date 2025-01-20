@@ -1,249 +1,224 @@
-import yaml from 'js-yaml';
+import {
+  appDeployKey,
+  deployPVCResizeKey,
+  gpuNodeSelectorKey,
+  gpuResourceKey,
+  maxReplicasKey,
+  minReplicasKey,
+  publicDomainKey
+} from '@/constants/app';
+import { SEALOS_USER_DOMAINS } from '@/store/static';
 import type { AppEditType } from '@/types/app';
-import { strToBase64, str2Num, pathFormat, pathToNameFormat } from '@/utils/tools';
-import { SEALOS_DOMAIN, INGRESS_SECRET } from '@/store/static';
-import { maxReplicasKey, minReplicasKey } from '@/constants/app';
+import { pathFormat, pathToNameFormat, str2Num, strToBase64 } from '@/utils/tools';
 import dayjs from 'dayjs';
+import yaml from 'js-yaml';
 
-export const json2Development = (data: AppEditType) => {
-  const template = {
-    apiVersion: 'apps/v1',
-    kind: 'Deployment',
-    metadata: {
-      name: data.appName,
-      annotations: {
-        originImageName: data.imageName,
-        [minReplicasKey]: `${data.hpa.use ? data.hpa.minReplicas : data.replicas}`,
-        [maxReplicasKey]: `${data.hpa.use ? data.hpa.maxReplicas : data.replicas}`
-      },
-      labels: {
-        [`${SEALOS_DOMAIN}/app-deploy-manager`]: data.appName,
+export const json2DeployCr = (data: AppEditType, type: 'deployment' | 'statefulset') => {
+  const totalStorage = data.storeList.reduce((acc, item) => acc + item.value, 0);
+
+  const metadata = {
+    name: data.appName,
+    annotations: {
+      originImageName: data.imageName,
+      [minReplicasKey]: `${data.hpa.use ? data.hpa.minReplicas : data.replicas}`,
+      [maxReplicasKey]: `${data.hpa.use ? data.hpa.maxReplicas : data.replicas}`,
+      [deployPVCResizeKey]: `${totalStorage}Gi`
+    },
+    labels: {
+      ...(data.labels || {}),
+      [appDeployKey]: data.appName,
+      app: data.appName
+    }
+  };
+  const commonSpec = {
+    replicas: str2Num(data.hpa.use ? data.hpa.minReplicas : data.replicas),
+    revisionHistoryLimit: 1,
+    selector: {
+      matchLabels: {
         app: data.appName
       }
+    }
+  };
+  const templateMetadata = {
+    labels: {
+      app: data.appName,
+      restartTime: `${dayjs().format('YYYYMMDDHHmmss')}`
+    }
+  };
+  const imagePullSecrets = data.secret.use
+    ? [
+        {
+          name: data.appName
+        }
+      ]
+    : undefined;
+  const commonContainer = {
+    name: data.appName,
+    image: `${data.secret.use ? `${data.secret.serverAddress}/` : ''}${data.imageName}`,
+    env:
+      data.envs.length > 0
+        ? data.envs.map((env) => ({
+            name: env.key,
+            value: env.valueFrom ? undefined : env.value,
+            valueFrom: env.valueFrom
+          }))
+        : [],
+    resources: {
+      requests: {
+        cpu: `${str2Num(Math.floor(data.cpu * 0.1))}m`,
+        memory: `${str2Num(Math.floor(data.memory * 0.1))}Mi`,
+        ...(!!data.gpu?.type ? { [gpuResourceKey]: data.gpu.amount } : {})
+      },
+      limits: {
+        cpu: `${str2Num(data.cpu)}m`,
+        memory: `${str2Num(data.memory)}Mi`,
+        ...(!!data.gpu?.type ? { [gpuResourceKey]: data.gpu.amount } : {})
+      }
+    },
+    command: (() => {
+      if (!data.runCMD) return undefined;
+      try {
+        return JSON.parse(data.runCMD);
+      } catch (error) {
+        return data.runCMD.split(' ').filter((item) => item);
+      }
+    })(),
+    args: (() => {
+      if (!data.cmdParam) return undefined;
+      try {
+        return JSON.parse(data.cmdParam) as string[];
+      } catch (error) {
+        return [data.cmdParam];
+      }
+    })(),
+    ports: data.networks.map((item, i) => ({
+      containerPort: item.port,
+      name: item.portName
+    })),
+    imagePullPolicy: 'Always'
+  };
+  const configMapVolumeMounts = data.configMapList.map((item) => ({
+    name: pathToNameFormat(item.mountPath),
+    mountPath: item.mountPath,
+    subPath: pathFormat(item.mountPath)
+  }));
+  const configMapVolumes = data.configMapList.map((item) => ({
+    name: pathToNameFormat(item.mountPath), // name === [development.***.volumeMounts[*].name]
+    configMap: {
+      name: data.appName, // name === configMap.yaml.meta.name
+      items: [
+        {
+          key: pathToNameFormat(item.mountPath),
+          path: pathFormat(item.mountPath) // path ===[development.***.volumeMounts[*].subPath]
+        }
+      ]
+    }
+  }));
+
+  // pvc settings
+  const storageTemplates = data.storeList.map((store) => ({
+    metadata: {
+      annotations: {
+        path: store.path,
+        value: `${store.value}`
+      },
+      name: store.name
     },
     spec: {
-      replicas: str2Num(data.hpa.use ? data.hpa.minReplicas : data.replicas),
-      revisionHistoryLimit: 1,
-      selector: {
-        matchLabels: {
-          app: data.appName
+      accessModes: ['ReadWriteOnce'],
+      resources: {
+        requests: {
+          storage: `${store.value}Gi`
         }
-      },
-      strategy: {
-        type: 'RollingUpdate',
-        rollingUpdate: {
-          maxUnavailable: 1,
-          maxSurge: 0
+      }
+    }
+  }));
+
+  // gpu node selector
+  const gpuMap = !!data.gpu?.type
+    ? {
+        restartPolicy: 'Always',
+        runtimeClassName: 'nvidia',
+        nodeSelector: {
+          [gpuNodeSelectorKey]: data.gpu.type
         }
-      },
-      template: {
-        metadata: {
-          labels: {
-            app: data.appName,
-            restartTime: `${dayjs().format('YYYYMMDDHHmmss')}`
+      }
+    : {};
+
+  const template = {
+    deployment: {
+      apiVersion: 'apps/v1',
+      kind: 'Deployment',
+      metadata,
+      spec: {
+        ...commonSpec,
+        strategy: {
+          type: 'RollingUpdate',
+          rollingUpdate: {
+            maxUnavailable: 0,
+            maxSurge: 1
           }
         },
-        spec: {
-          imagePullSecrets: data.secret.use
-            ? [
-                // 私有仓库秘钥
-                {
-                  name: data.appName
-                }
-              ]
-            : undefined,
-          containers: [
-            {
-              name: data.appName,
-              image: `${data.secret.use ? `${data.secret.serverAddress}/` : ''}${data.imageName}`,
-              env:
-                data.envs.length > 0
-                  ? data.envs.map((env) => ({
-                      name: env.key,
-                      value: env.value
-                    }))
-                  : [],
-              resources: {
-                requests: {
-                  cpu: `${str2Num(Math.floor(data.cpu * 0.1))}m`,
-                  // cpu: '5m',
-                  memory: `${str2Num(Math.floor(data.memory * 0.1))}Mi`
-                },
-                limits: {
-                  cpu: `${str2Num(data.cpu)}m`,
-                  // cpu: '30m',
-                  memory: `${str2Num(data.memory)}Mi`
-                }
-              },
-              command: data.runCMD.split(' ').filter((item) => item),
-              args: data.cmdParam.split(' ').filter((item) => item),
-              ports: [
-                {
-                  containerPort: str2Num(data.containerOutPort)
-                }
-              ],
-              imagePullPolicy: 'Always',
-              volumeMounts: [
-                ...data.configMapList.map((item) => ({
-                  name: pathToNameFormat(item.mountPath),
-                  mountPath: item.mountPath,
-                  subPath: pathFormat(item.mountPath)
-                }))
-              ]
-            }
-          ],
-          volumes: [
-            ...data.configMapList.map((item) => ({
-              name: pathToNameFormat(item.mountPath), // name === [development.***.volumeMounts[*].name]
-              configMap: {
-                name: data.appName, // name === configMap.yaml.meta.name
-                items: [
-                  {
-                    key: pathToNameFormat(item.mountPath),
-                    path: pathFormat(item.mountPath) // path ===[development.***.volumeMounts[*].subPath]
-                  }
+        template: {
+          metadata: templateMetadata,
+          spec: {
+            automountServiceAccountToken: false,
+            imagePullSecrets,
+            containers: [
+              {
+                ...commonContainer,
+                volumeMounts: [...(data?.volumeMounts || []), ...configMapVolumeMounts]
+              }
+            ],
+            ...gpuMap,
+            volumes: [...(data?.volumes || []), ...configMapVolumes]
+          }
+        }
+      }
+    },
+    statefulset: {
+      apiVersion: 'apps/v1',
+      kind: 'StatefulSet',
+      metadata,
+      spec: {
+        ...commonSpec,
+        updateStrategy: {
+          type: 'RollingUpdate',
+          rollingUpdate: {
+            maxUnavailable: '50%'
+          }
+        },
+        minReadySeconds: 10,
+        serviceName: data.appName,
+        template: {
+          metadata: templateMetadata,
+          spec: {
+            automountServiceAccountToken: false,
+            imagePullSecrets,
+            terminationGracePeriodSeconds: 10,
+            containers: [
+              {
+                ...commonContainer,
+                volumeMounts: [
+                  ...(data?.volumeMounts || []),
+                  ...configMapVolumeMounts,
+                  ...data.storeList.map((item) => ({
+                    name: item.name,
+                    mountPath: item.path
+                  }))
                 ]
               }
-            }))
-          ]
-        }
+            ],
+            ...gpuMap,
+            volumes: [...(data?.volumes || []), ...configMapVolumes]
+          }
+        },
+        volumeClaimTemplates: storageTemplates
       }
     }
   };
 
-  return yaml.dump(template);
-};
-
-export const json2StatefulSet = (data: AppEditType) => {
-  const template = {
-    apiVersion: 'apps/v1',
-    kind: 'StatefulSet',
-    metadata: {
-      name: data.appName,
-      annotations: {
-        originImageName: data.imageName,
-        [minReplicasKey]: `${data.hpa.use ? data.hpa.minReplicas : data.replicas}`,
-        [maxReplicasKey]: `${data.hpa.use ? data.hpa.maxReplicas : data.replicas}`
-      },
-      labels: {
-        [`${SEALOS_DOMAIN}/app-deploy-manager`]: data.appName,
-        app: data.appName
-      }
-    },
-    spec: {
-      replicas: str2Num(data.replicas),
-      revisionHistoryLimit: 1,
-      minReadySeconds: 10,
-      serviceName: data.appName,
-      selector: {
-        matchLabels: {
-          app: data.appName
-        }
-      },
-      strategy: {
-        type: 'RollingUpdate',
-        rollingUpdate: {
-          maxUnavailable: 1,
-          maxSurge: 0
-        }
-      },
-      template: {
-        metadata: {
-          labels: {
-            app: data.appName
-          }
-        },
-        spec: {
-          terminationGracePeriodSeconds: 10,
-          imagePullSecrets: data.secret.use
-            ? [
-                // 私有仓库秘钥
-                {
-                  name: data.appName
-                }
-              ]
-            : undefined,
-          containers: [
-            {
-              name: data.appName,
-              image: `${data.secret.use ? `${data.secret.serverAddress}/` : ''}${data.imageName}`,
-              env:
-                data.envs.length > 0
-                  ? data.envs.map((env) => ({
-                      name: env.key,
-                      value: env.value
-                    }))
-                  : [],
-              resources: {
-                requests: {
-                  cpu: `${str2Num(Math.floor(data.cpu / 2))}m`,
-                  // cpu: '5m',
-                  memory: `${str2Num(Math.floor(data.memory / 2))}Mi`
-                },
-                limits: {
-                  cpu: `${str2Num(data.cpu)}m`,
-                  // cpu: '30m',
-                  memory: `${str2Num(data.memory)}Mi`
-                }
-              },
-              command: data.runCMD.split(' ').filter((item) => item),
-              args: data.cmdParam.split(' ').filter((item) => item),
-              ports: [
-                {
-                  containerPort: str2Num(data.containerOutPort)
-                }
-              ],
-              imagePullPolicy: 'Always',
-              volumeMounts: [
-                ...data.configMapList.map((item) => ({
-                  name: pathToNameFormat(item.mountPath),
-                  mountPath: item.mountPath,
-                  subPath: pathFormat(item.mountPath)
-                })),
-                ...data.storeList.map((item) => ({
-                  name: pathToNameFormat(item.path),
-                  mountPath: item.path
-                }))
-              ]
-            }
-          ],
-          volumes: [
-            ...data.configMapList.map((item) => ({
-              name: pathToNameFormat(item.mountPath), // name === [development.***.volumeMounts[*].name]
-              configMap: {
-                name: data.appName, // name === configMap.yaml.meta.name
-                items: [
-                  {
-                    key: pathToNameFormat(item.mountPath),
-                    path: pathFormat(item.mountPath) // path ===[development.***.volumeMounts[*].subPath]
-                  }
-                ]
-              }
-            }))
-          ]
-        }
-      },
-      volumeClaimTemplates: data.storeList.map((store) => ({
-        metadata: {
-          annotations: {
-            path: store.path,
-            value: `${store.value}`
-          },
-          name: pathToNameFormat(store.path)
-        },
-        spec: {
-          accessModes: ['ReadWriteOnce'],
-          resources: {
-            requests: {
-              storage: `${store.value}Gi`
-            }
-          }
-        }
-      }))
-    }
-  };
-
-  return yaml.dump(template);
+  return yaml.dump(template[type]);
 };
 
 export const json2Service = (data: AppEditType) => {
@@ -253,15 +228,15 @@ export const json2Service = (data: AppEditType) => {
     metadata: {
       name: data.appName,
       labels: {
-        [`${SEALOS_DOMAIN}/app-deploy-manager`]: data.appName
+        [appDeployKey]: data.appName
       }
     },
     spec: {
-      ports: [
-        {
-          port: str2Num(data.containerOutPort)
-        }
-      ],
+      ports: data.networks.map((item, i) => ({
+        port: str2Num(item.port),
+        targetPort: str2Num(item.port),
+        name: item.portName
+      })),
       selector: {
         app: data.appName
       }
@@ -271,126 +246,142 @@ export const json2Service = (data: AppEditType) => {
 };
 
 export const json2Ingress = (data: AppEditType) => {
-  const host = data.accessExternal.selfDomain
-    ? data.accessExternal.selfDomain
-    : `${data.accessExternal.outDomain}.${SEALOS_DOMAIN}`;
-  const secretName = data.accessExternal.selfDomain ? data.appName : INGRESS_SECRET;
-
   // different protocol annotations
   const map = {
     HTTP: {
       'nginx.ingress.kubernetes.io/ssl-redirect': 'false',
       'nginx.ingress.kubernetes.io/backend-protocol': 'HTTP',
-      'nginx.ingress.kubernetes.io/rewrite-target': '/$2',
       'nginx.ingress.kubernetes.io/client-body-buffer-size': '64k',
       'nginx.ingress.kubernetes.io/proxy-buffer-size': '64k',
+      'nginx.ingress.kubernetes.io/proxy-send-timeout': '300',
+      'nginx.ingress.kubernetes.io/proxy-read-timeout': '300',
       'nginx.ingress.kubernetes.io/server-snippet':
-        'client_header_buffer_size 64k;\nlarge_client_header_buffers 4 128k;\n',
-      'nginx.ingress.kubernetes.io/configuration-snippet':
-        'if ($request_uri ~* \\.(js|css|gif|jpe?g|png)) {\n  expires 30d;\n  add_header Cache-Control "public";\n}\n'
+        'client_header_buffer_size 64k;\nlarge_client_header_buffers 4 128k;\n'
     },
     GRPC: {
       'nginx.ingress.kubernetes.io/ssl-redirect': 'false',
-      'nginx.ingress.kubernetes.io/backend-protocol': 'GRPC',
-      'nginx.ingress.kubernetes.io/rewrite-target': '/$2'
+      'nginx.ingress.kubernetes.io/backend-protocol': 'GRPC'
     },
     WS: {
-      'nginx.ingress.kubernetes.io/proxy-read-timeout': 3600,
-      'nginx.ingress.kubernetes.io/proxy-send-timeout': 3600
+      'nginx.ingress.kubernetes.io/proxy-read-timeout': '3600',
+      'nginx.ingress.kubernetes.io/proxy-send-timeout': '3600',
+      'nginx.ingress.kubernetes.io/backend-protocol': 'WS'
     }
   };
 
-  const ingress = {
-    apiVersion: 'networking.k8s.io/v1',
-    kind: 'Ingress',
-    metadata: {
-      name: data.appName,
-      labels: {
-        [`${SEALOS_DOMAIN}/app-deploy-manager`]: data.appName,
-        [`${SEALOS_DOMAIN}/app-deploy-manager-domain`]: `${data.accessExternal.outDomain}`
-      },
-      annotations: {
-        'kubernetes.io/ingress.class': 'nginx',
-        'nginx.ingress.kubernetes.io/proxy-body-size': '32m',
-        'nginx.ingress.kubernetes.io/server-snippet': `gzip on;gzip_min_length 1024;gzip_types text/plain text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript;`,
-        ...map[data.accessExternal.backendProtocol]
-      }
-    },
-    spec: {
-      rules: [
-        {
-          host: host,
-          http: {
-            paths: [
-              {
-                pathType: 'Prefix',
-                path: '/()(.*)',
-                backend: {
-                  service: {
-                    name: data.appName,
-                    port: {
-                      number: data.containerOutPort
+  const result = data.networks
+    .filter((item) => item.openPublicDomain)
+    .map((network, i) => {
+      const host = network.customDomain
+        ? network.customDomain
+        : `${network.publicDomain}.${network.domain}`;
+
+      const secretName = network.customDomain
+        ? network.networkName
+        : SEALOS_USER_DOMAINS.find((domain) => domain.name === network.domain)?.secretName ||
+          'wildcard-cert';
+
+      const ingress = {
+        apiVersion: 'networking.k8s.io/v1',
+        kind: 'Ingress',
+        metadata: {
+          name: network.networkName,
+          labels: {
+            [appDeployKey]: data.appName,
+            [publicDomainKey]: network.publicDomain
+          },
+          annotations: {
+            'kubernetes.io/ingress.class': 'nginx',
+            'nginx.ingress.kubernetes.io/proxy-body-size': '32m',
+            ...map[network.protocol]
+          }
+        },
+        spec: {
+          rules: [
+            {
+              host,
+              http: {
+                paths: [
+                  {
+                    pathType: 'Prefix',
+                    path: '/',
+                    backend: {
+                      service: {
+                        name: data.appName,
+                        port: {
+                          number: network.port
+                        }
+                      }
                     }
+                  }
+                ]
+              }
+            }
+          ],
+          tls: [
+            {
+              hosts: [host],
+              secretName
+            }
+          ]
+        }
+      };
+      const issuer = {
+        apiVersion: 'cert-manager.io/v1',
+        kind: 'Issuer',
+        metadata: {
+          name: network.networkName,
+          labels: {
+            [appDeployKey]: data.appName
+          }
+        },
+        spec: {
+          acme: {
+            server: 'https://acme-v02.api.letsencrypt.org/directory',
+            email: 'admin@sealos.io',
+            privateKeySecretRef: {
+              name: 'letsencrypt-prod'
+            },
+            solvers: [
+              {
+                http01: {
+                  ingress: {
+                    class: 'nginx',
+                    serviceType: 'ClusterIP'
                   }
                 }
               }
             ]
           }
         }
-      ],
-      tls: [
-        {
-          hosts: [host],
-          secretName
-        }
-      ]
-    }
-  };
-  const issuer = {
-    apiVersion: 'cert-manager.io/v1',
-    kind: 'Issuer',
-    metadata: {
-      name: data.appName
-    },
-    spec: {
-      acme: {
-        server: 'https://acme-v02.api.letsencrypt.org/directory',
-        email: 'admin@sealos.io',
-        privateKeySecretRef: {
-          name: 'letsencrypt-prod'
-        },
-        solvers: [
-          {
-            http01: {
-              ingress: {
-                class: 'nginx'
-              }
-            }
+      };
+      const certificate = {
+        apiVersion: 'cert-manager.io/v1',
+        kind: 'Certificate',
+        metadata: {
+          name: network.networkName,
+          labels: {
+            [appDeployKey]: data.appName
           }
-        ]
+        },
+        spec: {
+          secretName,
+          dnsNames: [network.customDomain],
+          issuerRef: {
+            name: network.networkName,
+            kind: 'Issuer'
+          }
+        }
+      };
+
+      let resYaml = yaml.dump(ingress);
+      if (network.customDomain) {
+        resYaml += `\n---\n${yaml.dump(issuer)}\n---\n${yaml.dump(certificate)}`;
       }
-    }
-  };
-  const certificate = {
-    apiVersion: 'cert-manager.io/v1',
-    kind: 'Certificate',
-    metadata: {
-      name: data.appName
-    },
-    spec: {
-      secretName,
-      dnsNames: [data.accessExternal.selfDomain],
-      issuerRef: {
-        name: data.appName,
-        kind: 'Issuer'
-      }
-    }
-  };
-  let resYaml = yaml.dump(ingress);
-  if (data.accessExternal.selfDomain) {
-    resYaml += `\n---\n${yaml.dump(issuer)}\n---\n${yaml.dump(certificate)}`;
-  }
-  return resYaml;
+      return resYaml;
+    });
+
+  return result.join('\n---\n');
 };
 
 export const json2ConfigMap = (data: AppEditType) => {
@@ -441,8 +432,10 @@ export const json2Secret = (data: AppEditType) => {
   return yaml.dump(template);
 };
 export const json2HPA = (data: AppEditType) => {
+  const isDeployment = data.storeList?.length === 0;
+
   const template = {
-    apiVersion: 'autoscaling/v2beta2',
+    apiVersion: 'autoscaling/v2',
     kind: 'HorizontalPodAutoscaler',
     metadata: {
       name: data.appName
@@ -450,43 +443,61 @@ export const json2HPA = (data: AppEditType) => {
     spec: {
       scaleTargetRef: {
         apiVersion: 'apps/v1',
-        kind: 'Deployment',
+        kind: isDeployment ? 'Deployment' : 'StatefulSet',
         name: data.appName
       },
       minReplicas: str2Num(data.hpa?.minReplicas),
       maxReplicas: str2Num(data.hpa?.maxReplicas),
-      metrics: [
-        {
-          type: 'Resource',
-          resource: {
-            name: data.hpa.target,
-            target: {
-              type: 'Utilization',
-              averageUtilization: str2Num(data.hpa.value)
-            }
+      metrics:
+        data.hpa.target === 'gpu'
+          ? [
+              {
+                pods: {
+                  metric: {
+                    name: 'DCGM_FI_DEV_GPU_UTIL'
+                  },
+                  target: {
+                    averageValue: data.hpa.value.toString(),
+                    type: 'AverageValue'
+                  }
+                },
+                type: 'Pods'
+              }
+            ]
+          : [
+              {
+                type: 'Resource',
+                resource: {
+                  name: data.hpa.target,
+                  target: {
+                    type: 'Utilization',
+                    averageUtilization: str2Num(data.hpa.value * 10)
+                  }
+                }
+              }
+            ],
+      ...(data.hpa.target !== 'gpu' && {
+        behavior: {
+          scaleDown: {
+            policies: [
+              {
+                type: 'Pods',
+                value: 1,
+                periodSeconds: 60
+              }
+            ]
+          },
+          scaleUp: {
+            policies: [
+              {
+                type: 'Pods',
+                value: 1,
+                periodSeconds: 60
+              }
+            ]
           }
         }
-      ],
-      behavior: {
-        scaleDown: {
-          policies: [
-            {
-              type: 'Pods',
-              value: 1,
-              periodSeconds: 60
-            }
-          ]
-        },
-        scaleUp: {
-          policies: [
-            {
-              type: 'Pods',
-              value: 3,
-              periodSeconds: 60
-            }
-          ]
-        }
-      }
+      })
     }
   };
   return yaml.dump(template);

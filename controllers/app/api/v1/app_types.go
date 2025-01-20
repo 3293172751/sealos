@@ -26,18 +26,39 @@ type Data struct {
 }
 
 type MenuData struct {
-	NameColor    string `json:"nameColor,omitempty"`
-	HelpDropDown bool   `json:"helpDropDown,omitempty"`
-	HelpDocs     string `json:"helpDocs,omitempty"`
+	Name string `json:"name,omitempty"`
+	Link string `json:"link,omitempty"`
+}
+
+type DisplayType string
+
+// data types
+const (
+	DisplayNormal DisplayType = "normal"
+	DisplayMore   DisplayType = "more"
+	DisplayHidden DisplayType = "hidden"
+)
+
+// AppMeta Base Information
+type AppMeta struct {
+	Name string `json:"name,omitempty"`
+	Icon string `json:"icon,omitempty"`
+	Type string `json:"type,omitempty"`
+
+	//+kubebuilder:validation:Enum={ normal, more, hidden, }
+	//+kubebuilder:validation:Optional
+	DisplayType DisplayType `json:"displayType,omitempty"`
+
+	Data     Data       `json:"data,omitempty"`
+	MenuData []MenuData `json:"menuData,omitempty"`
 }
 
 // AppSpec defines the desired state of App
 type AppSpec struct {
-	Name     string   `json:"name,omitempty"`
-	Icon     string   `json:"icon,omitempty"`
-	Type     string   `json:"type,omitempty"`
-	Data     Data     `json:"data,omitempty"`
-	MenuData MenuData `json:"menuData,omitempty"`
+	AppMeta `json:",inline"`
+
+	//+kubebuilder:validation:Optional
+	I18N *map[string]AppMeta `json:"i18n,omitempty"`
 }
 
 // AppStatus defines the observed state of App

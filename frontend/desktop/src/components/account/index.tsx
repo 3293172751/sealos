@@ -1,103 +1,243 @@
-/* eslint-disable @next/next/no-img-element */
+import Notification from '@/components/notification';
 import { useCopyData } from '@/hooks/useCopyData';
-import request from '@/services/request';
+import { useConfigStore } from '@/stores/config';
 import useSessionStore from '@/stores/session';
 import download from '@/utils/downloadFIle';
-import { Avatar, Box, Flex, Text, UseDisclosureProps } from '@chakra-ui/react';
-import { useQuery } from '@tanstack/react-query';
-import JsYaml from 'js-yaml';
+import { Box, Center, Flex, IconButton, Image, Text, useDisclosure } from '@chakra-ui/react';
+import { CopyIcon, DocsIcon, DownloadIcon, LogoutIcon, NotificationIcon } from '@sealos/ui';
+import { useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'next-i18next';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
-import Iconfont from '../iconfont';
+import { useCallback, useState } from 'react';
+import LangSelectSimple from '../LangSelect/simple';
+import { blurBackgroundStyles } from '../desktop_content';
+import RegionToggle from '../region/RegionToggle';
+import WorkspaceToggle from '../team/WorkspaceToggle';
+import GithubComponent from './github';
+import { ArrowIcon } from '../icons';
+import useAppStore from '@/stores/app';
+import AccountCenter from './AccountCenter';
+import CustomTooltip from '../AppDock/CustomTooltip';
 
-export default function Index({ accountDisclosure }: { accountDisclosure: UseDisclosureProps }) {
-  const router = useRouter();
-  const { delSession, getSession } = useSessionStore();
-  const { user, kubeconfig } = getSession();
-  const { copyData } = useCopyData();
-  const userKubeConfigId = useMemo(() => {
-    try {
-      let temp = JsYaml.load(kubeconfig);
-      // @ts-ignore
-      return 'ns-' + temp?.users[0]?.name;
-    } catch (error) {
-      return '';
-    }
-  }, [kubeconfig]);
-
-  const { data } = useQuery(['getAccount'], () => request('/api/account/getAmount'));
-
-  let real_balance = data?.data?.balance ?? 0;
-  if (data?.data?.deductionBalance) {
-    real_balance = real_balance - data.data.deductionBalance;
+const baseItemStyle = {
+  w: '52px',
+  h: '40px',
+  background: 'rgba(255, 255, 255, 0.07)',
+  color: 'white',
+  borderRadius: '100px',
+  _hover: {
+    background: 'rgba(255, 255, 255, 0.15)'
   }
+};
+
+export default function Account() {
+  const { layoutConfig } = useConfigStore();
+  const [showId, setShowId] = useState(true);
+  const router = useRouter();
+  const { copyData } = useCopyData();
+  const { t } = useTranslation();
+  const { delSession, session, setToken } = useSessionStore();
+  const user = session?.user;
+  const queryclient = useQueryClient();
+  const kubeconfig = session?.kubeconfig || '';
+  const showDisclosure = useDisclosure();
+  const [notificationAmount, setNotificationAmount] = useState(0);
+  const { installedApps, openApp } = useAppStore();
+
+  const onAmount = useCallback((amount: number) => setNotificationAmount(amount), []);
 
   const logout = (e: React.MouseEvent<HTMLElement>) => {
     e.preventDefault();
     delSession();
-    router.reload();
+    queryclient.clear();
+    router.replace('/signin');
+    setToken('');
+  };
+
+  const openWorkOrderApp = () => {
+    const workorder = installedApps.find((t) => t.key === 'system-workorder');
+    if (!workorder) return;
+    openApp(workorder);
   };
 
   return (
-    <>
-      <Box
-        position={'fixed'}
-        top={0}
-        left={0}
-        bottom={0}
-        right={0}
-        zIndex={'998'}
-        onClick={accountDisclosure.onClose}
-      ></Box>
-      <Box
-        w="297px"
-        h="347px"
-        bg="rgba(255, 255, 255, 0.75)"
-        boxShadow={'0px 1px 2px rgba(0, 0, 0, 0.2)'}
-        position={'absolute'}
-        top="48px"
-        right={0}
-        zIndex={'999'}
-        borderRadius={'8px'}
-        p="20px"
-        backdropFilter={'blur(150px)'}
-      >
-        <Flex justifyContent={'end'} alignItems={'center'} overflow={'hidden'} onClick={logout}>
-          <Iconfont iconName="icon-logout" width={14} height={14} color="#24282C"></Iconfont>
-          <Text ml="6px" color={'#24282C'} fontSize={'12px'} fontWeight={500}>
-            退出账号
-          </Text>
-        </Flex>
-        <Flex mt="8px" justifyContent={'center'} alignItems={'center'} flexDirection={'column'}>
-          <Avatar w="80px" h="80px" src={user?.avatar || ''} />
-          <Text color={'#24282C'} fontSize={'20px'} fontWeight={600}>
-            {user?.name}
-          </Text>
-          <Flex alignItems={'center'} mt="4px" color={'#7B838B'}>
-            <Text>ID: {userKubeConfigId}</Text>
-            <Box ml="4px" onClick={() => copyData(userKubeConfigId)}>
-              <Iconfont iconName="icon-copy2" width={16} height={16} color="#7B838B"></Iconfont>
-            </Box>
-          </Flex>
-          <Box w="100%" mt="24px" bg="rgba(255, 255, 255, 0.6)" borderRadius={'4px'}>
-            <Flex h="60px" alignItems={'center'}>
-              <Text ml="16px">kubeconfig</Text>
-
-              <Box ml="auto" onClick={() => download('kubeconfig.yaml', kubeconfig)}>
-                <Iconfont
-                  iconName="icon-download"
-                  width={16}
-                  height={16}
-                  color="#219BF4"
-                ></Iconfont>
-              </Box>
-              <Box ml="8px" mr="20px" onClick={() => copyData(kubeconfig)}>
-                <Iconfont iconName="icon-copy2" width={16} height={16} color="#219BF4"></Iconfont>
-              </Box>
+    <Box position={'relative'} flex={1}>
+      <Flex position={'relative'} zIndex={3} px={'16px'} pt={'20px'} flexDirection={'column'}>
+        <Flex alignItems={'center'}>
+          <Center width={'36px'} height={'36px'} bg={'white'} borderRadius="full" mr={'8px'}>
+            <Image
+              width={user?.avatar && user.avatar.trim() !== '' ? 'full' : '20px'}
+              height={user?.avatar && user.avatar.trim() !== '' ? 'full' : '20px'}
+              objectFit={'cover'}
+              borderRadius="full"
+              src={user?.avatar}
+              fallbackSrc={'/images/default-user.svg'}
+              alt="user avator"
+              draggable={'false'}
+            />
+          </Center>
+          <Box>
+            <Text lineHeight={'20px'} color={'white'} fontSize={'14px'} fontWeight={500}>
+              {user?.name}
+            </Text>
+            <Flex
+              cursor={'pointer'}
+              gap="2px"
+              fontSize={'11px'}
+              lineHeight={'16px'}
+              fontWeight={'500'}
+              color={'rgba(255, 255, 255, 0.70)'}
+              alignItems={'center'}
+            >
+              <Text onClick={() => setShowId((s) => !s)}>
+                {showId ? `ID:${user?.userId}` : `NS:${user?.nsid}`}
+              </Text>
+              <CopyIcon
+                onClick={() => {
+                  if (user?.userId && user.nsid) copyData(showId ? user?.userId : user?.nsid);
+                }}
+                boxSize={'12px'}
+                fill={'rgba(255, 255, 255, 0.70)'}
+              />
             </Flex>
           </Box>
+          <Center
+            p={'4px'}
+            h={'fit-content'}
+            borderRadius={'4px'}
+            ml={'auto'}
+            cursor={'pointer'}
+            _hover={{
+              background: 'rgba(255, 255, 255, 0.15)'
+            }}
+          >
+            <LogoutIcon boxSize={'14px'} fill={'white'} />
+            <Text ml="4px" color={'white'} fontSize={'12px'} fontWeight={500} onClick={logout}>
+              {t('common:log_out')}
+            </Text>
+          </Center>
         </Flex>
-      </Box>
-    </>
+        <Flex mt={'16px'} justifyContent={'space-between'} position={'relative'}>
+          {layoutConfig?.common.docsUrl && (
+            <CustomTooltip placement={'bottom'} label={t('common:doc')}>
+              <Center
+                cursor={'pointer'}
+                {...baseItemStyle}
+                onClick={() => window.open(layoutConfig?.common?.docsUrl)}
+              >
+                <DocsIcon />
+              </Center>
+            </CustomTooltip>
+          )}
+          <CustomTooltip placement={'bottom'} label={t('common:language')}>
+            <Center>
+              <LangSelectSimple {...baseItemStyle} />
+            </Center>
+          </CustomTooltip>
+          {layoutConfig?.common.githubStarEnabled && (
+            <CustomTooltip placement="bottom" label={t('common:github')}>
+              <Center>
+                <GithubComponent {...baseItemStyle} />
+              </Center>
+            </CustomTooltip>
+          )}
+
+          <CustomTooltip placement={'bottom'} label={t('common:notification')}>
+            <Center cursor={'pointer'} {...baseItemStyle} onClick={() => showDisclosure.onOpen()}>
+              <NotificationIcon color={'white'} />
+            </Center>
+          </CustomTooltip>
+          <Notification key={'notification'} disclosure={showDisclosure} onAmount={onAmount} />
+        </Flex>
+
+        <RegionToggle />
+
+        <WorkspaceToggle />
+
+        {layoutConfig?.common.accountSettingEnabled && (
+          <Flex
+            borderBottom={'1px solid rgba(255, 255, 255, 0.05)'}
+            color={'white'}
+            fontSize={'base'}
+            fontWeight={'bold'}
+            justifyContent={'space-between'}
+            alignItems={'center'}
+            py={'12px'}
+            px={'16px'}
+          >
+            <Text>{t('common:account_settings')}</Text>
+            <AccountCenter variant={'white-bg-icon'} p="4px" />
+          </Flex>
+        )}
+        {layoutConfig?.common.workorderEnabled && (
+          <Flex
+            borderBottom={'1px solid rgba(255, 255, 255, 0.05)'}
+            color={'white'}
+            fontSize={'base'}
+            fontWeight={'bold'}
+            justifyContent={'space-between'}
+            alignItems={'center'}
+            py={'12px'}
+            px={'16px'}
+          >
+            <Text>{t('common:work_order')}</Text>
+            <IconButton
+              variant={'white-bg-icon'}
+              p="4px"
+              onClick={openWorkOrderApp}
+              icon={<ArrowIcon fill={'rgba(255, 255, 255, 0.7)'} />}
+              aria-label={'setting'}
+            />
+          </Flex>
+        )}
+
+        <Flex
+          color={'white'}
+          fontSize={'base'}
+          fontWeight={'bold'}
+          justifyContent={'space-between'}
+          alignItems={'center'}
+          py={'12px'}
+          px={'16px'}
+        >
+          <Text>Kubeconfig</Text>
+          <Flex alignItems={'center'}>
+            <IconButton
+              variant={'white-bg-icon'}
+              p="4px"
+              ml="auto"
+              mr="4px"
+              onClick={() => kubeconfig && download('kubeconfig.yaml', kubeconfig)}
+              icon={
+                <DownloadIcon
+                  boxSize={'16px'}
+                  color={'rgba(255, 255, 255, 0.7)'}
+                  fill={'rgba(255, 255, 255, 0.7)'}
+                />
+              }
+              aria-label={'Download kc'}
+            />
+            <IconButton
+              variant={'white-bg-icon'}
+              p="4px"
+              onClick={() => kubeconfig && copyData(kubeconfig)}
+              icon={<CopyIcon boxSize={'16px'} fill={'rgba(255, 255, 255, 0.7)'} />}
+              aria-label={'copy kc'}
+            />
+          </Flex>
+        </Flex>
+      </Flex>
+      <Box
+        id="blur-background"
+        zIndex={0}
+        position={'absolute'}
+        top={0}
+        left={0}
+        w={'full'}
+        h={'full'}
+        overflow={'hidden'}
+        {...blurBackgroundStyles}
+      ></Box>
+    </Box>
   );
 }

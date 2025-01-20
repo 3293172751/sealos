@@ -23,7 +23,7 @@ on:
       - "!**/*.yaml"
 env:
   # Common versions
-  GO_VERSION: "1.20"
+  GO_VERSION: "1.22"
   DEFAULT_OWNER: "labring"
 
 jobs:
@@ -59,7 +59,7 @@ jobs:
       - name: Run Linter
         uses: golangci/golangci-lint-action@v3
         with:
-          version: latest
+          version: v1.54.2
           working-directory: ${{ matrix.workdir }}
           args: "--out-${NO_FUTURE}format colored-line-number"
 
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [ whitelist ]
+        module: [ admission ]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -99,7 +99,7 @@ jobs:
       - name: Prepare
         id: prepare
         run: |
-          TAG=dev
+          TAG=latest
           echo tag_name=${TAG} >> $GITHUB_OUTPUT
 
       - # Add support for more platforms with QEMU (optional)

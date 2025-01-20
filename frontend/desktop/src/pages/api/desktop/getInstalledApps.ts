@@ -1,45 +1,58 @@
-// import MockInstalAPPs from 'mock/installedApps';
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { authSession } from '@/services/backend/auth';
-import { GetUserDefaultNameSpace, K8sApi, ListCRD } from '../../../services/backend/kubernetes';
+import { verifyAccessToken } from '@/services/backend/auth';
+import { getUserKubeconfigNotPatch } from '@/services/backend/kubernetes/admin';
+import { K8sApi, ListCRD } from '@/services/backend/kubernetes/user';
 import { jsonRes } from '@/services/backend/response';
+import { CRDMeta, TAppCRList, TAppConfig } from '@/types';
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+import { globalPrisma } from '@/services/backend/db/init';
+import { switchKubeconfigNamespace } from '@/utils/switchKubeconfigNamespace';
+import { UserStatus } from 'prisma/global/generated/client';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const kc = await authSession(req.headers);
-
-    const kube_user = kc.getCurrentUser();
-    if (kube_user === null) {
-      return jsonRes(res, { code: 403, message: 'user is null' });
-    }
-
-    const defaultMeta = {
+    const payload = await verifyAccessToken(req.headers);
+    if (!payload) return jsonRes(res, { code: 401, message: 'token is invaild' });
+    const user = await globalPrisma.user.findUnique({
+      where: {
+        uid: payload.userUid,
+        status: UserStatus.NORMAL_USER
+      }
+    });
+    if (!user) return jsonRes(res, { code: 401, message: 'user is locked' });
+    const _kc = await getUserKubeconfigNotPatch(payload.userCrName);
+    if (!_kc) return jsonRes(res, { code: 404, message: 'user is not found' });
+    const realKc = switchKubeconfigNamespace(_kc, payload.workspaceId);
+    const kc = K8sApi(realKc);
+    const getMeta = (namespace = 'app-system') => ({
       group: 'app.sealos.io',
       version: 'v1',
-      namespace: 'app-system',
+      namespace,
       plural: 'apps'
-    };
-
-    const meta = {
-      group: 'app.sealos.io',
-      version: 'v1',
-      namespace: GetUserDefaultNameSpace(kube_user.name),
-      plural: 'apps'
-    };
-
-    const defaultResult = await ListCRD(kc, defaultMeta);
-    const userResult = await ListCRD(kc, meta);
-
-    //@ts-ignore
-    const defaultArr = defaultResult?.body?.items.map((item: any) => {
-      return { key: `system-${item.metadata.name}`, ...item.spec };
-    });
-    //@ts-ignore
-    const userArr = userResult?.body?.items.map((item: any) => {
-      return { key: `user-${item.metadata.name}`, ...item.spec };
     });
 
-    let apps = [...defaultArr, ...userArr];
+    const getRawAppList = async (meta: CRDMeta) =>
+      ((await ListCRD(kc, meta)).body as TAppCRList).items || [];
+
+    const defaultArr = (await getRawAppList(getMeta()))
+      .map<TAppConfig>((item) => {
+        return { key: `system-${item.metadata.name}`, ...item.spec };
+      })
+      .sort((a, b) => {
+        if (a.displayType === 'more' && b.displayType !== 'more') {
+          return 1;
+        } else if (a.displayType !== 'more' && b.displayType === 'more') {
+          return -1;
+        } else {
+          return 0;
+        }
+      });
+
+    const userArr = (await getRawAppList(getMeta(payload.workspaceId))).map<TAppConfig>((item) => {
+      return { key: `user-${item.metadata.name}`, ...item.spec, displayType: 'normal' };
+    });
+
+    let apps = [...defaultArr, ...userArr].filter((item) => item.displayType !== 'hidden');
 
     jsonRes(res, { data: apps });
   } catch (err) {

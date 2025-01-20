@@ -1,6 +1,14 @@
 import * as k8s from '@kubernetes/client-node';
 import * as yaml from 'js-yaml';
 import type { V1Deployment, V1StatefulSet } from '@kubernetes/client-node';
+import { UserQuotaItemType } from '@/types/user';
+import { memoryFormatToMi, cpuFormatToM } from '@/utils/tools';
+
+export function K8sApiDefault(): k8s.KubeConfig {
+  const kc = new k8s.KubeConfig();
+  kc.loadFromDefault();
+  return kc;
+}
 
 export function CheckIsInCluster(): [boolean, string] {
   if (
@@ -31,7 +39,7 @@ export function K8sApi(config: string): k8s.KubeConfig {
       name: cluster.name,
       caData: cluster.caData,
       caFile: cluster.caFile,
-      server: inCluster && hosts ? hosts : 'https://apiserver.cluster.local:6443',
+      server: inCluster && hosts ? hosts : cluster.server,
       skipTLSVerify: cluster.skipTLSVerify
     };
 
@@ -44,13 +52,6 @@ export function K8sApi(config: string): k8s.KubeConfig {
   return kc;
 }
 
-export type CRDMeta = {
-  group: string; // group
-  version: string; // version
-  namespace: string; // namespace
-  plural: string; // type
-};
-
 export async function CreateYaml(
   kc: k8s.KubeConfig,
   specs: k8s.KubernetesObject[]
@@ -60,7 +61,7 @@ export async function CreateYaml(
   const created = [] as k8s.KubernetesObject[];
 
   try {
-    for (const spec of validSpecs) {
+    for await (const spec of validSpecs) {
       spec.metadata = spec.metadata || {};
       spec.metadata.annotations = spec.metadata.annotations || {};
       delete spec.metadata.annotations['kubectl.kubernetes.io/last-applied-configuration'];
@@ -76,8 +77,8 @@ export async function CreateYaml(
     /* delete success specs */
     for (const spec of created) {
       try {
+        await client.delete(spec);
         console.log('delete:', spec.kind);
-        client.delete(spec);
       } catch (error) {
         error;
       }
@@ -136,12 +137,76 @@ export async function replaceYaml(
   return succeed;
 }
 
-export function GetUserDefaultNameSpace(user: string): string {
-  return 'ns-' + user;
+export async function getUserQuota(
+  kc: k8s.KubeConfig,
+  namespace: string
+): Promise<UserQuotaItemType[]> {
+  const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+
+  const {
+    body: { status }
+  } = await k8sApi.readNamespacedResourceQuota(`quota-${namespace}`, namespace);
+
+  return [
+    {
+      type: 'cpu',
+      limit: cpuFormatToM(status?.hard?.['limits.cpu'] || '') / 1000,
+      used: cpuFormatToM(status?.used?.['limits.cpu'] || '') / 1000
+    },
+    {
+      type: 'memory',
+      limit: memoryFormatToMi(status?.hard?.['limits.memory'] || '') / 1024,
+      used: memoryFormatToMi(status?.used?.['limits.memory'] || '') / 1024
+    },
+    {
+      type: 'storage',
+      limit: memoryFormatToMi(status?.hard?.['requests.storage'] || '') / 1024,
+      used: memoryFormatToMi(status?.used?.['requests.storage'] || '') / 1024
+    },
+    {
+      type: 'gpu',
+      limit: Number(status?.hard?.['requests.nvidia.com/gpu'] || 0),
+      used: Number(status?.used?.['requests.nvidia.com/gpu'] || 0)
+    }
+  ];
+}
+
+export async function getUserBalance(kc: k8s.KubeConfig) {
+  const user = kc.getCurrentUser();
+  if (!user) return 5;
+
+  const k8sApi = kc.makeApiClient(k8s.CustomObjectsApi);
+
+  const { body } = (await k8sApi.getNamespacedCustomObject(
+    'account.sealos.io',
+    'v1',
+    'sealos-system',
+    'accounts',
+    user.name
+  )) as { body: { status: { balance: number; deductionBalance: number } } };
+
+  if (body?.status?.balance !== undefined && body?.status?.deductionBalance !== undefined) {
+    return (body.status.balance - body.status.deductionBalance) / 1000000;
+  }
+
+  return 5;
 }
 
 export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
   const kc = K8sApi(kubeconfig);
+
+  // rewrite exportConfig to stop transform domain to ip
+  kc.exportConfig = () => {
+    const domain = global.AppConfig.cloud.domain;
+    if (!domain) return kubeconfig;
+    const oldKc = yaml.load(kubeconfig);
+    const newServer = `https://${domain}:6443`;
+    //@ts-ignore
+    oldKc.clusters[0].cluster.server = newServer;
+    const newkubeconfig = yaml.dump(oldKc);
+    return newkubeconfig;
+  };
+
   const kube_user = kc.getCurrentUser();
   const client = k8s.KubernetesObjectApi.makeApiClient(kc);
 
@@ -149,7 +214,7 @@ export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
     return Promise.reject('用户不存在');
   }
 
-  const namespace = GetUserDefaultNameSpace(kube_user.name);
+  const namespace = kc.contexts[0].namespace || `ns-${kube_user.name}`;
 
   const applyYamlList = async (yamlList: string[], type: 'create' | 'replace') => {
     // insert namespace
@@ -174,6 +239,7 @@ export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
   const getDeployApp = async (appName: string) => {
     let app: V1Deployment | V1StatefulSet | null = null;
     const k8sApp = kc.makeApiClient(k8s.AppsV1Api);
+    const k8sCore = kc.makeApiClient(k8s.CoreV1Api);
 
     try {
       app = (await k8sApp.readNamespacedDeployment(appName, namespace)).body;
@@ -186,6 +252,7 @@ export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
     } catch (error: any) {
       error;
     }
+
     if (!app) {
       return Promise.reject('can not find app');
     }
@@ -202,9 +269,12 @@ export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
     k8sNetworkingApp: kc.makeApiClient(k8s.NetworkingV1Api),
     k8sCustomObjects: kc.makeApiClient(k8s.CustomObjectsApi),
     metricsClient: new k8s.Metrics(kc),
+    k8sExec: new k8s.Exec(kc),
     kube_user,
     namespace,
     applyYamlList,
-    getDeployApp
+    getDeployApp,
+    getUserQuota: () => getUserQuota(kc, namespace),
+    getUserBalance: () => getUserBalance(kc)
   });
 }

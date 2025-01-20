@@ -1,11 +1,10 @@
 import useSessionStore from '@/stores/session';
 import type { ApiResp } from '@/types';
 import axios, { AxiosHeaders, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
-
 const request = axios.create({
   baseURL: '/',
   withCredentials: true,
-  timeout: 60000
+  timeout: 20000
 });
 
 // request interceptor
@@ -13,18 +12,9 @@ request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     let _headers: AxiosHeaders = config.headers || {};
 
-    const session = useSessionStore.getState().session;
-
-    if (config.url && config.url?.startsWith('/api/')) {
-      _headers['Authorization'] = encodeURIComponent(session?.kubeconfig || '');
-    } else if (process.env.NEXT_PUBLIC_SERVICE) {
-      config.url = process.env.NEXT_PUBLIC_SERVICE + config.url;
-      if (session?.token?.access_token) {
-        const token = session.token.access_token;
-        if (token) {
-          _headers['Authorization'] = `Bearer ${token}`;
-        }
-      }
+    const token = useSessionStore.getState().token;
+    if (token && config.url && config.url?.startsWith('/api/')) {
+      _headers['Authorization'] = encodeURIComponent(token);
     }
 
     if (!config.headers || config.headers['Content-Type'] === '') {
@@ -45,14 +35,19 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response: AxiosResponse) => {
     const { status, data } = response;
-
+    if (data.code === 401) {
+      console.log('鉴权失败');
+      useSessionStore.getState().delSession();
+      useSessionStore.getState().setToken('');
+      return window.location.replace('/signin');
+    }
     if (status < 200 || status >= 300) {
       return Promise.reject(new Error(data?.code + ':' + data?.message));
     }
 
     const apiResp = data as ApiResp;
     if (apiResp?.code && (apiResp.code < 200 || apiResp.code >= 300)) {
-      return Promise.reject(apiResp.code + ':' + apiResp.message);
+      return Promise.reject({ code: apiResp.code, message: apiResp.message, data: apiResp.data });
     }
 
     return data;

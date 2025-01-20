@@ -1,82 +1,102 @@
----
-## 新建管理员,只允许创建管理员
+# Copyright © 2023 sealos.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# permissions for end users to edit users.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sealos-user-create-role
+  name: user-editor-role
 rules:
   - apiGroups:
       - user.sealos.io
     resources:
-      - 'usergroupbindings'
+      - users
     verbs:
       - create
       - delete
-      - deletecollection
-      - patch
-      - update
----
-## 新增、删除用户，管理员只允许移入移除用户
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: sealos-user-manager-role
-rules:
-  - apiGroups:
-      - user.sealos.io
-    resources:
-      - 'usergroupbindings'
-    verbs:
-      - create
-      - delete
-      - deletecollection
-      - patch
-      - update
-  - apiGroups:
-      - user.sealos.io
-    resources:
-      - 'users'
-    verbs:
-      - list
       - get
+      - list
+      - patch
+      - update
       - watch
+  - apiGroups:
+      - user.sealos.io
+    resources:
+      - users/status
+    verbs:
+      - get
 ---
-##普通用户创建namespace,usergroup
+# permissions for end users to edit operationrequests.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sealos-user-user-role
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: operationrequest-editor-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: user
+    app.kubernetes.io/part-of: user
+    app.kubernetes.io/managed-by: kustomize
+  name: operationrequest-editor-role
 rules:
   - apiGroups:
       - user.sealos.io
     resources:
-      - 'usergroupbindings'
+      - operationrequests
     verbs:
       - create
       - delete
-      - deletecollection
+      - get
+      - list
       - patch
       - update
+      - watch
   - apiGroups:
       - user.sealos.io
     resources:
-      - 'usergroups'
+      - operationrequests/status
+    verbs:
+      - get
+---
+# permissions for end users to edit deleterequests.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: deleterequest-editor-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: user
+    app.kubernetes.io/part-of: user
+    app.kubernetes.io/managed-by: kustomize
+  name: deleterequest-editor-role
+rules:
+  - apiGroups:
+      - user.sealos.io
+    resources:
+      - deleterequests
     verbs:
       - create
       - delete
-      - deletecollection
+      - get
+      - list
       - patch
       - update
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: user-controller-manager-clusterrolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: ServiceAccount
-    name: user-controller-manager
-    namespace: user-system
+      - watch
+  - apiGroups:
+      - user.sealos.io
+    resources:
+      - deleterequests/status
+    verbs:
+      - get

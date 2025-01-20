@@ -20,16 +20,16 @@ const ErrorModal = ({
   onClose: () => void;
 }) => {
   return (
-    <Modal isOpen={true} onClose={onClose}>
+    <Modal isOpen={true} onClose={onClose} lockFocusAcrossFrames={false}>
       <ModalOverlay />
-      <ModalContent py={3}>
+      <ModalContent>
         <ModalHeader display={'flex'} alignItems={'center'} color={'myRed.600'}>
           <MyIcon name="warning"></MyIcon>
           <Box ml={3} fontSize={'xl'}>
             {title}
           </Box>
         </ModalHeader>
-        <ModalCloseButton color={'myRed.600'} fontSize={'16px'} transform={'translateY(10px)'} />
+        <ModalCloseButton fontSize={'16px'} />
         <ModalBody maxH={'50vh'} overflow={'auto'} whiteSpace={'pre-wrap'}>
           {content}
         </ModalBody>

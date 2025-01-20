@@ -21,13 +21,15 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/docker/docker/api/types"
+	"github.com/labring/sreg/pkg/registry/crane"
 
-	"github.com/labring/sealos/pkg/registry"
+	"github.com/labring/sealos/pkg/exec"
+	"github.com/labring/sealos/pkg/registry/helpers"
+
+	"github.com/docker/docker/api/types"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/labring/sealos/pkg/bootstrap"
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/ssh"
 	"github.com/labring/sealos/pkg/template"
@@ -74,7 +76,7 @@ func (n *RegistryChecker) Check(cluster *v2.Cluster, phase string) error {
 	if cfg, err := fileutil.ReadAll(registryConfig); err != nil {
 		status.Error = fmt.Errorf("read registry config error: %w", err).Error()
 	} else {
-		cfgMap, _ := yaml.UnmarshalData(cfg)
+		cfgMap, _ := yaml.UnmarshalToMap(cfg)
 		status.Port, _, _ = unstructured.NestedString(cfgMap, "http", "addr")
 		status.Storage, _, _ = unstructured.NestedString(cfgMap, "storage", "filesystem", "rootdirectory")
 		status.Delete, _, _ = unstructured.NestedBool(cfgMap, "storage", "delete", "enabled")
@@ -86,20 +88,20 @@ func (n *RegistryChecker) Check(cluster *v2.Cluster, phase string) error {
 		}
 	}
 
-	sshCtx, err := ssh.NewSSHByCluster(cluster, false)
+	sshCtx := ssh.NewCacheClientFromCluster(cluster, false)
+	execer, err := exec.New(sshCtx)
 	if err != nil {
-		status.Error = fmt.Errorf("get ssh interface error: %w", err).Error()
-		return nil
+		return err
 	}
-	root := constants.NewData(cluster.Name).RootFSPath()
-	regInfo := bootstrap.GetRegistryInfo(sshCtx, root, cluster.GetRegistryIPAndPort())
+	root := constants.NewPathResolver(cluster.Name).RootFSPath()
+	regInfo := helpers.GetRegistryInfo(execer, root, cluster.GetRegistryIPAndPort())
 	status.Auth = fmt.Sprintf("%s:%s", regInfo.Username, regInfo.Password)
 	status.RegistryDomain = fmt.Sprintf("%s:%s", regInfo.Domain, regInfo.Port)
 	cfg := types.AuthConfig{
 		Username: regInfo.Username,
 		Password: regInfo.Password,
 	}
-	_, err = registry.NewRegistry(status.RegistryDomain, cfg)
+	_, err = crane.NewRegistry(status.RegistryDomain, cfg)
 	if err != nil {
 		status.Error = fmt.Errorf("get registry interface error: %w", err).Error()
 		return nil

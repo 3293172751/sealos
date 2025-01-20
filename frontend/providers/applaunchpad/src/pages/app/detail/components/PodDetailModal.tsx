@@ -14,20 +14,23 @@ import {
   useDisclosure,
   MenuButton
 } from '@chakra-ui/react';
+import { ChevronDownIcon } from '@chakra-ui/icons';
 import type { PodDetailType, PodEvent } from '@/types/app';
 import PodLineChart from '@/components/PodLineChart';
 import { MOCK_PODS } from '@/mock/apps';
-import { Tooltip } from '@chakra-ui/react';
 import { getPodEvents } from '@/api/app';
 import { useQuery } from '@tanstack/react-query';
 import { useLoading } from '@/hooks/useLoading';
 import MyIcon from '@/components/Icon';
 import { streamFetch } from '@/services/streamFetch';
 import { useToast } from '@/hooks/useToast';
-import MyMenu from '@/components/Menu';
-import { ChevronDownIcon } from '@chakra-ui/icons';
+import { SealosMenu } from '@sealos/ui';
+
+import { MyTooltip } from '@sealos/ui';
 
 import styles from '../index.module.scss';
+import { useTranslation } from 'next-i18next';
+import { SHOW_EVENT_ANALYZE } from '@/store/static';
 
 const Logs = ({
   pod = MOCK_PODS[0],
@@ -42,6 +45,7 @@ const Logs = ({
   setPodDetail: (name: string) => void;
   closeFn: () => void;
 }) => {
+  const { t } = useTranslation();
   const theme = useTheme();
   const controller = useRef(new AbortController());
   const { Loading } = useLoading();
@@ -59,13 +63,13 @@ const Logs = ({
     ({ label, children }: { label: string; children: React.ReactNode }) => {
       return (
         <Flex w={'100%'} my={5} alignItems="center">
-          <Box flex={'0 0 100px'} w={0}>
+          <Box flex={'0 0 100px'} w={0} color={'grayModern.900'}>
             {label}
           </Box>
           <Box
             flex={'1 0 0'}
             w={0}
-            color={'myGray.600'}
+            color={'grayModern.600'}
             userSelect={typeof children === 'string' ? 'all' : 'auto'}
           >
             {children}
@@ -77,26 +81,26 @@ const Logs = ({
   );
   const RenderTag = useCallback(({ children }: { children: string }) => {
     return (
-      <Tooltip label={children}>
+      <MyTooltip label={children}>
         <Box
           py={1}
           px={4}
-          backgroundColor={'myWhite.600'}
+          backgroundColor={'grayModern.100'}
           whiteSpace={'nowrap'}
           overflow={'hidden'}
           textOverflow={'ellipsis'}
-          color={'myGray.600'}
+          color={'grayModern.700'}
           cursor={'default'}
-          border={'1px solid'}
-          borderColor={'myGray.100'}
+          border={theme.borders.base}
+          borderRadius={'md'}
         >
           {children}
         </Box>
-      </Tooltip>
+      </MyTooltip>
     );
   }, []);
 
-  const { isLoading } = useQuery(['init'], () => getPodEvents(pod.podName), {
+  const { isLoading } = useQuery(['initPodEvents'], () => getPodEvents(pod.podName), {
     refetchInterval: 3000,
     onSuccess(res) {
       setEvents(res);
@@ -149,23 +153,23 @@ const Logs = ({
   }, [events, onCloseAnalysesModel, onEndAnalyses, onOpenAnalyses, onStartAnalyses, toast]);
 
   return (
-    <Modal isOpen={true} onClose={closeFn} size={'sm'} isCentered>
+    <Modal isOpen={true} onClose={closeFn} size={'sm'} isCentered lockFocusAcrossFrames={false}>
       <ModalOverlay />
       <ModalContent h={'90vh'} maxW={'90vw'} m={0} display={'flex'} flexDirection={'column'}>
         <ModalCloseButton fontSize={16} top={6} right={6} />
         <Flex p={7} alignItems={'center'}>
           <Box mr={3} fontSize={'xl'} fontWeight={'bold'}>
-            Pod 详情
+            Pod {t('Details')}
           </Box>
           <Box px={3}>
-            <MyMenu
+            <SealosMenu
               width={240}
               Button={
                 <MenuButton
                   minW={'240px'}
                   h={'32px'}
                   textAlign={'start'}
-                  bg={'myWhite.400'}
+                  bg={'grayModern.100'}
                   border={theme.borders.base}
                   borderRadius={'md'}
                 >
@@ -185,27 +189,24 @@ const Logs = ({
         </Flex>
         <Grid gridTemplateColumns={'1fr 1fr'} gridGap={2} py={2} px={7}>
           <Box>
-            <Box mb={3}>
-              CPU ({((pod.usedCpu[pod.usedCpu.length - 1] / pod.cpu) * 100).toFixed(2)}%)
-            </Box>
-            <Box h={'60px'} w={'100%'}>
-              <PodLineChart type="cpu" cpu={pod.cpu} data={pod.usedCpu} />
+            <Box mb={3}>CPU ({pod.usedCpu.yData[pod.usedCpu.yData.length - 1]}%)</Box>
+            <Box h={'80px'} w={'100%'}>
+              <PodLineChart type={'blue'} data={pod.usedCpu} />
             </Box>
           </Box>
           <Box>
             <Box mb={3}>
-              内存 ({((pod.usedMemory[pod.usedMemory.length - 1] / pod.memory) * 100).toFixed(2)}
-              %)
+              {t('Memory')} ({pod.usedMemory.yData[pod.usedMemory.yData.length - 1]}%)
             </Box>
-            <Box h={'60px'} w={'100%'}>
-              <PodLineChart type="memory" data={pod.usedMemory} />
+            <Box h={'80px'} w={'100%'}>
+              <PodLineChart type={'purple'} data={pod.usedMemory} />
             </Box>
           </Box>
         </Grid>
         <Grid py={5} flex={'1 0 0'} h={0} px={7} gridTemplateColumns={'450px 1fr'} gridGap={4}>
           <Flex flexDirection={'column'} h={'100%'}>
             <Box mb={4} color={'myGray.600'}>
-              详情
+              {t('Details')}
             </Box>
             <Box
               flex={'1 0 0'}
@@ -215,7 +216,7 @@ const Logs = ({
               py={3}
               overflowY={'auto'}
             >
-              <RenderItem label="状态">
+              <RenderItem label={t('Status')}>
                 <Box as="span" color={pod.status.color}>
                   {pod.status.label}
                 </Box>
@@ -247,7 +248,7 @@ const Logs = ({
           <Flex position={'relative'} flexDirection={'column'} h={'100%'}>
             <Flex mb={4} alignItems={'center'}>
               <Box color={'myGray.600'}>Events</Box>
-              {events.length > 0 && (
+              {events.length > 0 && SHOW_EVENT_ANALYZE && (
                 <Button
                   ml={3}
                   size={'sm'}
@@ -255,7 +256,7 @@ const Logs = ({
                   leftIcon={<MyIcon name={'analyze'} />}
                   onClick={onclickAnalyses}
                 >
-                  智能分析
+                  {t('Intelligent Analysis')}
                 </Button>
               )}
             </Flex>
@@ -277,7 +278,7 @@ const Logs = ({
                     borderRadius: '8px',
                     backgroundColor: '#fff',
                     border: '2px solid',
-                    borderColor: event.type === 'Warning' ? '#FF8492' : '#33BABB'
+                    borderColor: event.type === 'Warning' ? '#D92D20' : '#039855'
                   }}
                 >
                   <Flex lineHeight={1} mb={2} alignItems={'center'}>
@@ -303,7 +304,7 @@ const Logs = ({
                 >
                   <MyIcon name="noEvents" w={'48px'} h={'48px'} color={'transparent'} />
                   <Box mt={4} color={'myGray.600'}>
-                    暂无 Events
+                    {t('No events yet')}
                   </Box>
                 </Flex>
               )}
@@ -313,20 +314,20 @@ const Logs = ({
         </Grid>
       </ModalContent>
       {/* analyses modal */}
-      <Modal isOpen={isOpenAnalyses} onClose={onCloseAnalysesModel}>
+      <Modal isOpen={isOpenAnalyses} onClose={onCloseAnalysesModel} lockFocusAcrossFrames={false}>
         <ModalOverlay />
-        <ModalContent maxW={'50vw'}>
-          <ModalHeader>Pod 问题分析</ModalHeader>
+        <ModalContent maxW={'50vw'} h={'70vh'}>
+          <ModalHeader>Pod {t('Intelligent Analysis')}</ModalHeader>
           <ModalCloseButton />
-          <ModalBody position={'relative'}>
-            <Box
-              className={isAnalyzing ? styles.analysesAnimation : ''}
-              h={'60vh'}
-              overflowY={'auto'}
-              whiteSpace={'pre-wrap'}
-            >
-              {eventAnalysesText}
-            </Box>
+          <ModalBody
+            className={isAnalyzing ? styles.analysesAnimation : ''}
+            overflowY={'auto'}
+            h={'100%'}
+            whiteSpace={'pre-wrap'}
+            position={'relative'}
+            pb={2}
+          >
+            {eventAnalysesText}
           </ModalBody>
         </ModalContent>
       </Modal>

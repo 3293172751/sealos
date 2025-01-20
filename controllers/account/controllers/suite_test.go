@@ -19,16 +19,17 @@ package controllers
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	accountv1 "github.com/labring/sealos/controllers/account/api/v1"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
-	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	//+kubebuilder:scaffold:imports
@@ -44,9 +45,7 @@ var testEnv *envtest.Environment
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	RunSpecsWithDefaultAndCustomReporters(t,
-		"Controller Suite",
-		[]Reporter{printer.NewlineReporter{}})
+	RunSpecsWithDefaultAndCustomReporters(t, "Controller Suite", []Reporter{})
 }
 
 var _ = BeforeSuite(func() {
@@ -67,6 +66,9 @@ var _ = BeforeSuite(func() {
 	err = accountv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = corev1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
 	//+kubebuilder:scaffold:scheme
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
@@ -80,3 +82,40 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+func TestCalculateBillingHours(t *testing.T) {
+	//lastUpdateTime := time.Date(2021, 11, 1, 10, 35, 20, 0, time.UTC)
+	//currentHourTime := time.Date(2021, 11, 1, 14, 0, 0, 0, time.UTC)
+
+	lastUpdateTime := time.Date(2021, 11, 1, 10, 0, 0, 0, time.UTC)
+	currentHourTime := time.Date(2021, 11, 1, 14, 0, 0, 0, time.UTC)
+	//lastUpdateTime := time.Date(2021, 11, 1, 14, 0, 0, 0, time.UTC)
+	//currentHourTime := time.Date(2021, 11, 1, 14, 0, 0, 0, time.UTC)
+
+	expected := []time.Time{
+		time.Date(2021, 11, 1, 11, 0, 0, 0, time.UTC),
+		time.Date(2021, 11, 1, 12, 0, 0, 0, time.UTC),
+		time.Date(2021, 11, 1, 13, 0, 0, 0, time.UTC),
+		time.Date(2021, 11, 1, 14, 0, 0, 0, time.UTC),
+	}
+
+	result := CalculateBillingHours(lastUpdateTime, currentHourTime)
+
+	if len(result) != len(expected) {
+		t.Fatalf("expected %d billing hours, but got %d", len(expected), len(result))
+	}
+
+	for i := range result {
+		if !result[i].Equal(expected[i]) {
+			t.Errorf("expected billing hour %v, but got %v", expected[i], result[i])
+		}
+	}
+}
+
+func CalculateBillingHours(lastUpdateTime, currentHourTime time.Time) []time.Time {
+	needBillingHours := make([]time.Time, 0)
+	for t := lastUpdateTime.Truncate(time.Hour).Add(time.Hour); t.Before(currentHourTime) || t.Equal(currentHourTime); t = t.Add(time.Hour) {
+		needBillingHours = append(needBillingHours, t)
+	}
+	return needBillingHours
+}

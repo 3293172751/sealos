@@ -24,10 +24,11 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/utils/exec"
+	executils "k8s.io/utils/exec"
 
-	"github.com/labring/sealos/pkg/bootstrap"
 	"github.com/labring/sealos/pkg/constants"
+	"github.com/labring/sealos/pkg/exec"
+	"github.com/labring/sealos/pkg/registry/helpers"
 	"github.com/labring/sealos/pkg/ssh"
 	"github.com/labring/sealos/pkg/template"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
@@ -73,12 +74,12 @@ func (n *CRICtlChecker) Check(cluster *v2.Cluster, phase string) error {
 	if cfg, err := fileutil.ReadAll(criShimConfig); err != nil {
 		status.Error = fmt.Errorf("read crictl config error: %w", err).Error()
 	} else {
-		cfgMap, _ := yaml.UnmarshalData(cfg)
+		cfgMap, _ := yaml.UnmarshalToMap(cfg)
 		status.Config = map[string]string{}
 		status.Config["ShimSocket"], _, _ = unstructured.NestedString(cfgMap, "image-endpoint")
 		status.Config["CRISocket"], _, _ = unstructured.NestedString(cfgMap, "runtime-endpoint")
 	}
-	execer := exec.New()
+	execer := executils.New()
 	crictlPath, err := execer.LookPath("crictl")
 	if err != nil {
 		status.Error = fmt.Errorf("error looking for path of crictl: %w", err).Error()
@@ -99,18 +100,20 @@ func (n *CRICtlChecker) Check(cluster *v2.Cluster, phase string) error {
 
 	pauseImage := ""
 	for _, mountImg := range cluster.Status.Mounts {
-		if mountImg.Type == v2.RootfsImage || mountImg.Type == v2.PatchImage {
-			pauseImage = mountImg.Env["sandboxImage"]
+		if mountImg.IsRootFs() || mountImg.IsPatch() {
+			if v, ok := mountImg.Env["sandboxImage"]; ok {
+				pauseImage = v
+				break
+			}
 		}
 	}
-	sshCtx, err := ssh.NewSSHByCluster(cluster, false)
+	sshCtx := ssh.NewCacheClientFromCluster(cluster, false)
+	sshCtx, err = exec.New(sshCtx)
 	if err != nil {
-		status.Error = fmt.Errorf("get ssh interface error: %w", err).Error()
-		return nil
+		return err
 	}
-
-	root := constants.NewData(cluster.Name).RootFSPath()
-	regInfo := bootstrap.GetRegistryInfo(sshCtx, root, cluster.GetRegistryIPAndPort())
+	root := constants.NewPathResolver(cluster.Name).RootFSPath()
+	regInfo := helpers.GetRegistryInfo(sshCtx, root, cluster.GetRegistryIPAndPort())
 
 	regStatus, err := n.getRegistryStatus(crictlPath, pauseImage, fmt.Sprintf("%s:%s", regInfo.Domain, regInfo.Port))
 	if err != nil {

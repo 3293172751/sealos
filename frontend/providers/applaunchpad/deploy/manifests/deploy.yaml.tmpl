@@ -12,7 +12,32 @@ metadata:
   namespace: applaunchpad-frontend
 data:
   config.yaml: |-
-    addr: :3000
+    cloud:
+      domain: {{ .cloudDomain }}
+      port: {{ if .cloudPort }}:{{ .cloudPort }}{{ end }}
+      desktopDomain: {{ .cloudDomain }}
+      userDomains: 
+        - name: {{ .cloudDomain }}
+          secretName: {{ .certSecretName }}
+    common:
+      guideEnabled: false
+      apiEnabled: false
+    launchpad:
+      eventAnalyze:
+        enabled: false
+        fastGPTKey: ""
+      components:
+        monitor:
+          url: {{ .monitorUrl }}
+        billing:
+          url: {{ .billingUrl }}
+      appResourceFormSliderConfig:
+        default:
+          cpu: [100, 200, 500, 1000, 2000, 3000, 4000, 8000]
+          memory: [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+      fileManger:
+        uploadLimit: 50 # MB
+        downloadLimit: 100 # MB
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,20 +50,17 @@ spec:
     matchLabels:
       app: applaunchpad-frontend
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
   template:
     metadata:
       labels:
         app: applaunchpad-frontend
     spec:
       containers:
-        - env:
-            - name: SEALOS_DOMAIN
-              value: {{ .cloudDomain }}
-            - name: INGRESS_SECRET
-              value: {{ .ingressSecret }}
-            - name: FASTGPT_KEY
-          name: applaunchpad-frontend
+        - name: applaunchpad-frontend
           securityContext:
             runAsNonRoot: true
             runAsUser: 1001
@@ -48,18 +70,30 @@ spec:
                 - "ALL"
           resources:
             limits:
-              cpu: 1000m
-              memory: 1024Mi
+              cpu: 2000m
+              memory: 2048Mi
             requests:
               cpu: 10m
               memory: 128Mi
           # do not modify this image, it is used for CI/CD
-          image: ghcr.io/labring/sealos-applaunchpad-frontend:dev
+          image: ghcr.io/labring/sealos-applaunchpad-frontend:latest
           imagePullPolicy: Always
           volumeMounts:
-            - name: applaunchpad-frontend-volume
-              mountPath: /config.yaml
+            - mountPath: /app/data/config.yaml
+              name: applaunchpad-frontend-volume
               subPath: config.yaml
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: "app"
+                  operator: In
+                  values:
+                  - applaunchpad-frontend
+              topologyKey: "kubernetes.io/hostname"
       volumes:
         - name: applaunchpad-frontend-volume
           configMap:

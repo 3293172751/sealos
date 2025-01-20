@@ -1,69 +1,105 @@
+import { TAppSourceType } from '@/types/app';
+
 export enum AppStatusEnum {
   running = 'running',
+  creating = 'creating',
   waiting = 'waiting',
   error = 'error',
   pause = 'pause'
 }
 export const appStatusMap = {
   [AppStatusEnum.running]: {
-    label: '运行中',
+    label: 'Running',
     value: AppStatusEnum.running,
-    color: '#00A9A6',
-    backgroundColor: '#E6F6F6',
-    dotColor: '#00A9A6'
+    color: 'green.600',
+    backgroundColor: 'green.50',
+    dotColor: 'green.600'
   },
-  [AppStatusEnum.waiting]: {
-    label: '创建中',
-    value: AppStatusEnum.waiting,
-    color: '#787A90',
-    backgroundColor: '#F5F5F8',
-    dotColor: '#787A90'
+  [AppStatusEnum.creating]: {
+    label: 'Creating',
+    value: AppStatusEnum.creating,
+    color: 'grayModern.500',
+    backgroundColor: 'grayModern.100',
+    dotColor: 'grayModern.500'
   },
   [AppStatusEnum.error]: {
-    label: '有异常',
+    label: 'Abnormality Detected',
     value: AppStatusEnum.error,
-    color: '#FF5B6E',
-    backgroundColor: '#FFEBED',
-    dotColor: '#FF5B6E'
+    color: 'rgba(240, 68, 56, 1)',
+    backgroundColor: 'rgba(254, 243, 242, 1)',
+    dotColor: 'rgba(240, 68, 56, 1)'
   },
   [AppStatusEnum.pause]: {
-    label: '已暂停',
+    label: 'Paused',
     value: AppStatusEnum.pause,
-    color: '#8172D8',
-    backgroundColor: '#F2F1FB',
-    dotColor: '#8172D8'
+    color: 'rgba(111, 93, 215, 1)',
+    backgroundColor: 'rgba(240, 238, 255, 1)',
+    dotColor: 'rgba(111, 93, 215, 1)'
+  },
+  [AppStatusEnum.waiting]: {
+    label: 'Waiting',
+    value: AppStatusEnum.waiting,
+    color: 'grayModern.500',
+    backgroundColor: 'rgba(17, 24, 36, 0.05)',
+    dotColor: 'grayModern.500'
   }
 };
 
 export enum PodStatusEnum {
-  Pending = 'Pending',
-  Running = 'Running',
-  Failed = 'Failed',
-  Unknown = 'Unknown'
+  waiting = 'waiting',
+  running = 'running',
+  terminated = 'terminated'
 }
 export const podStatusMap = {
-  [PodStatusEnum.Running]: {
-    label: 'Running',
-    value: PodStatusEnum.Running,
-    color: '#00A9A6'
+  [PodStatusEnum.running]: {
+    label: 'running',
+    value: PodStatusEnum.running,
+    color: 'green.600'
   },
-  [PodStatusEnum.Pending]: {
-    label: 'Pending',
-    value: PodStatusEnum.Pending,
-    color: '#787A90'
+  [PodStatusEnum.waiting]: {
+    label: 'waiting',
+    value: PodStatusEnum.waiting,
+    color: '#787A90',
+    reason: '',
+    message: ''
   },
-  [PodStatusEnum.Failed]: {
-    label: 'Failed',
-    value: PodStatusEnum.Failed,
-    color: '#FF5B6E'
-  },
-  [PodStatusEnum.Unknown]: {
-    label: 'Unknown',
-    value: PodStatusEnum.Unknown,
-    color: '#FF5B6E'
+  [PodStatusEnum.terminated]: {
+    label: 'terminated',
+    value: PodStatusEnum.terminated,
+    color: '#8172D8',
+    reason: '',
+    message: ''
   }
 };
 
+export const ProtocolList = [
+  { value: 'HTTP', label: 'https://' },
+  { value: 'GRPC', label: 'grpcs://' },
+  { value: 'WS', label: 'wss://' }
+];
+
+export const defaultSliderKey = 'default';
 export const pauseKey = 'deploy.cloud.sealos.io/pause';
 export const maxReplicasKey = 'deploy.cloud.sealos.io/maxReplicas';
 export const minReplicasKey = 'deploy.cloud.sealos.io/minReplicas';
+export const deployPVCResizeKey = 'deploy.cloud.sealos.io/resize';
+export const appDeployKey = 'cloud.sealos.io/app-deploy-manager';
+export const publicDomainKey = `cloud.sealos.io/app-deploy-manager-domain`;
+export const gpuNodeSelectorKey = 'nvidia.com/gpu.product';
+export const gpuResourceKey = 'nvidia.com/gpu';
+export const templateDeployKey = 'cloud.sealos.io/deploy-on-sealos';
+export const sealafDeployKey = 'sealaf-app';
+
+export enum Coin {
+  cny = 'cny',
+  shellCoin = 'shellCoin',
+  usd = 'usd'
+}
+
+export const AppSourceConfigs: Array<{
+  key: string;
+  type: TAppSourceType;
+}> = [
+  { key: templateDeployKey, type: 'app_store' },
+  { key: sealafDeployKey, type: 'sealaf' }
+];

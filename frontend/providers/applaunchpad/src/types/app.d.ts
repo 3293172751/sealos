@@ -1,4 +1,5 @@
 import { AppStatusEnum, PodStatusEnum } from '@/constants/app';
+import { YamlKindEnum } from '@/utils/adapt';
 import type {
   V1Deployment,
   V1ConfigMap,
@@ -8,10 +9,13 @@ import type {
   V1HorizontalPodAutoscaler,
   V1Pod,
   SinglePodMetrics,
-  V1StatefulSet
+  V1StatefulSet,
+  V1Volume,
+  V1VolumeMount
 } from '@kubernetes/client-node';
+import { MonitorDataResult } from './monitor';
 
-export type HpaTarget = 'cpu' | 'memory';
+export type HpaTarget = 'cpu' | 'memory' | 'gpu';
 
 export type DeployKindsType =
   | V1Deployment
@@ -23,6 +27,12 @@ export type DeployKindsType =
   | V1HorizontalPodAutoscaler;
 
 export type EditType = 'form' | 'yaml';
+
+export type GpuType = {
+  manufacturers: string;
+  type: string;
+  amount: number;
+};
 
 export interface AppStatusMapType {
   label: string;
@@ -40,13 +50,18 @@ export interface AppListItemType {
   createTime: string;
   cpu: number;
   memory: number;
-  usedCpu: number[];
-  useMemory: number[];
+  gpu?: GpuType;
+  usedCpu: MonitorDataResult;
+  usedMemory: MonitorDataResult; // average value
   activeReplicas: number;
   minReplicas: number;
   maxReplicas: number;
   storeAmount: number;
+  labels: { [key: string]: string };
+  source: TAppSource;
 }
+
+export type ProtocolType = 'HTTP' | 'GRPC' | 'WS';
 
 export interface AppEditType {
   appName: string;
@@ -56,16 +71,21 @@ export interface AppEditType {
   replicas: number | '';
   cpu: number;
   memory: number;
-  containerOutPort: number | '';
-  accessExternal: {
-    use: boolean;
-    backendProtocol: 'HTTP' | 'GRPC' | 'WS';
-    outDomain: string;
-    selfDomain: string;
-  };
+  gpu?: GpuType;
+  networks: {
+    networkName: string;
+    portName: string;
+    port: number;
+    protocol: ProtocolType;
+    openPublicDomain: boolean;
+    publicDomain: string; //  domainPrefix
+    customDomain: string; // custom domain
+    domain: string; // Main promoted domain
+  }[];
   envs: {
     key: string;
     value: string;
+    valueFrom?: any;
   }[];
   hpa: {
     use: boolean;
@@ -85,19 +105,47 @@ export interface AppEditType {
     value: string;
   }[];
   storeList: {
+    name: string;
     path: string;
     value: number;
   }[];
+  labels: { [key: string]: string };
+  volumes: V1Volume[];
+  volumeMounts: V1VolumeMount[];
+  kind: 'deployment' | 'statefulset';
 }
 
+export type AppEditSyncedFields = Pick<
+  AppEditType,
+  | 'imageName'
+  | 'replicas'
+  | 'cpu'
+  | 'memory'
+  | 'networks'
+  | 'cmdParam'
+  | 'runCMD'
+  | 'appName'
+  | 'labels'
+>;
+
+export type TAppSourceType = 'app_store' | 'sealaf';
+
+export type TAppSource = {
+  hasSource: boolean;
+  sourceName: string;
+  sourceType: TAppSourceType;
+};
 export interface AppDetailType extends AppEditType {
   id: string;
   createTime: string;
   status: AppStatusMapType;
   isPause: boolean;
   imageName: string;
-  usedCpu: number[];
-  usedMemory: number[];
+  usedCpu: MonitorDataResult;
+  usedMemory: MonitorDataResult;
+  crYamlList: DeployKindsType[];
+  labels: { [key: string]: string };
+  source: TAppSource;
   // pods: PodDetailType[];
 }
 
@@ -105,6 +153,8 @@ export interface PodStatusMapType {
   label: string;
   value: `${PodStatusEnum}`;
   color: string;
+  reason?: string;
+  message?: string;
 }
 export interface PodDetailType extends V1Pod {
   podName: string;
@@ -113,10 +163,13 @@ export interface PodDetailType extends V1Pod {
   ip: string;
   restarts: number;
   age: string;
-  usedCpu: number[];
-  usedMemory: number[];
+  usedCpu: MonitorDataResult;
+  usedMemory: MonitorDataResult;
   cpu: number;
   memory: number;
+  podReason?: string;
+  podMessage?: string;
+  containerStatus: PodStatusMapType;
 }
 export interface PodMetrics {
   podName: string;
@@ -133,3 +186,9 @@ export interface PodEvent {
   firstTime: string;
   lastTime: string;
 }
+
+export type AppPatchPropsType = (
+  | { type: 'delete'; kind: `${YamlKindEnum}`; name: string }
+  | { type: 'patch'; kind: `${YamlKindEnum}`; value: Record<string, any> }
+  | { type: 'create'; kind: `${YamlKindEnum}`; value: string }
+)[];

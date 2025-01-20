@@ -17,30 +17,29 @@ package apply
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 
-	"github.com/labring/sealos/pkg/constants"
-	"github.com/labring/sealos/pkg/ssh"
-	fileutil "github.com/labring/sealos/pkg/utils/file"
-	"github.com/labring/sealos/pkg/utils/iputils"
-	strings2 "github.com/labring/sealos/pkg/utils/strings"
-
+	"github.com/spf13/cobra"
+	"golang.org/x/exp/slices"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/labring/sealos/pkg/apply/applydrivers"
 	"github.com/labring/sealos/pkg/clusterfile"
+	"github.com/labring/sealos/pkg/constants"
+	"github.com/labring/sealos/pkg/exec"
+	"github.com/labring/sealos/pkg/ssh"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
+	fileutil "github.com/labring/sealos/pkg/utils/file"
+	"github.com/labring/sealos/pkg/utils/iputils"
 )
 
 // NewScaleApplierFromArgs will filter ip list from command parameters.
-func NewScaleApplierFromArgs(scaleArgs *ScaleArgs, flag string) (applydrivers.Interface, error) {
+func NewScaleApplierFromArgs(cmd *cobra.Command, scaleArgs *ScaleArgs) (applydrivers.Interface, error) {
 	var cluster *v2.Cluster
-	var curr *v2.Cluster
 	clusterPath := constants.Clusterfile(scaleArgs.Cluster.ClusterName)
+
 	if !fileutil.IsExist(clusterPath) {
 		cluster = initCluster(scaleArgs.Cluster.ClusterName)
-		curr = cluster
 	} else {
 		clusterFile := clusterfile.NewClusterFile(clusterPath)
 		err := clusterFile.Process()
@@ -48,16 +47,17 @@ func NewScaleApplierFromArgs(scaleArgs *ScaleArgs, flag string) (applydrivers.In
 			return nil, err
 		}
 		cluster = clusterFile.GetCluster()
-		curr = clusterFile.GetCluster().DeepCopy()
 	}
+
+	curr := cluster.DeepCopy()
 
 	if scaleArgs.Cluster.Nodes == "" && scaleArgs.Cluster.Masters == "" {
 		return nil, fmt.Errorf("the node or master parameter was not committed")
 	}
 	var err error
-	switch flag {
+	switch cmd.Name() {
 	case "add":
-		err = Join(cluster, scaleArgs)
+		err = verifyAndSetNodes(cmd, cluster, scaleArgs)
 	case "delete":
 		err = Delete(cluster, scaleArgs)
 	}
@@ -65,17 +65,55 @@ func NewScaleApplierFromArgs(scaleArgs *ScaleArgs, flag string) (applydrivers.In
 		return nil, err
 	}
 
-	return applydrivers.NewDefaultScaleApplier(curr, cluster)
+	return applydrivers.NewDefaultScaleApplier(cmd.Context(), curr, cluster)
 }
 
-func Join(cluster *v2.Cluster, scalingArgs *ScaleArgs) error {
-	return joinNodes(cluster, scalingArgs)
+func getSSHFromCommand(cmd *cobra.Command) *v2.SSH {
+	var (
+		ret     = &v2.SSH{}
+		fs      = cmd.Flags()
+		changed bool
+	)
+	if flagChanged(cmd, "user") {
+		ret.User, _ = fs.GetString("user")
+		changed = true
+	}
+	if flagChanged(cmd, "passwd") {
+		ret.Passwd, _ = fs.GetString("passwd")
+		changed = true
+	}
+	if flagChanged(cmd, "pk") {
+		ret.Pk, _ = fs.GetString("pk")
+		changed = true
+	}
+	if flagChanged(cmd, "pk-passwd") {
+		ret.PkPasswd, _ = fs.GetString("pk-passwd")
+		changed = true
+	}
+	if flagChanged(cmd, "port") {
+		ret.Port, _ = fs.GetUint16("port")
+		changed = true
+	}
+	if changed {
+		return ret
+	}
+	return nil
 }
 
-func joinNodes(cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
+func flagChanged(cmd *cobra.Command, name string) bool {
+	if cmd != nil {
+		if fs := cmd.Flag(name); fs != nil && fs.Changed {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyAndSetNodes(cmd *cobra.Command, cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
 	if err := PreProcessIPList(scaleArgs.Cluster); err != nil {
 		return err
 	}
+
 	masters, nodes := scaleArgs.Cluster.Masters, scaleArgs.Cluster.Nodes
 	if len(masters) > 0 {
 		if err := validateIPList(masters); err != nil {
@@ -88,16 +126,16 @@ func joinNodes(cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
 		}
 	}
 
-	defaultPort := strconv.Itoa(int(cluster.Spec.SSH.Port))
+	defaultPort := defaultSSHPort(cluster.Spec.SSH.Port)
 
 	var hosts []v2.Host
 	var hasMaster bool
 	// check duplicate
 	alreadyIn := sets.NewString()
-	// add already add masters and nodes
+	// add already joined masters and nodes
 	for i := range cluster.Spec.Hosts {
 		h := cluster.Spec.Hosts[i]
-		if strings2.InList(v2.MASTER, h.Roles) {
+		if slices.Contains(h.Roles, v2.MASTER) {
 			hasMaster = true
 		}
 		ips := iputils.GetHostIPAndPortSlice(h.IPS, defaultPort)
@@ -106,11 +144,14 @@ func joinNodes(cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
 			IPS:   ips,
 			Roles: h.Roles,
 			Env:   h.Env,
+			SSH:   h.SSH,
 		})
 	}
 	if !hasMaster {
 		return fmt.Errorf("`master` role not found, due to Clusterfile may have been corrupted?")
 	}
+	override := getSSHFromCommand(cmd)
+
 	getHostFunc := func(sliceStr string, role string, exclude []string) (*v2.Host, error) {
 		ss := strings.Split(sliceStr, ",")
 		addrs := make([]string, 0)
@@ -123,18 +164,27 @@ func joinNodes(cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
 			if alreadyIn.Has(addr) {
 				return nil, fmt.Errorf("host %s already joined", addr)
 			}
-			if !strings2.InList(addr, exclude) {
+			if !slices.Contains(exclude, addr) {
 				addrs = append(addrs, addr)
 			}
 		}
 		if len(addrs) > 0 {
-			clusterSSH := cluster.GetSSH()
-			sshClient := ssh.NewSSHClient(&clusterSSH, true)
+			global := cluster.Spec.SSH.DeepCopy()
+			ssh.OverSSHConfig(global, override)
 
-			return &v2.Host{
+			sshClient := ssh.MustNewClient(global, true)
+			execer, err := exec.New(sshClient)
+			if err != nil {
+				return nil, err
+			}
+			host := &v2.Host{
 				IPS:   addrs,
-				Roles: []string{role, GetHostArch(sshClient, addrs[0])},
-			}, nil
+				Roles: []string{role, GetHostArch(execer, addrs[0])},
+			}
+			if override != nil {
+				host.SSH = override
+			}
+			return host, nil
 		}
 		return nil, nil
 	}
@@ -174,12 +224,13 @@ func deleteNodes(cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
 	}
 
 	//master0 machine cannot be deleted
-	if strings2.InList(cluster.GetMaster0IPAndPort(), strings.Split(masters, ",")) ||
-		strings2.InList(cluster.GetMaster0IP(), strings.Split(masters, ",")) {
-		return fmt.Errorf("master0 machine cannot be deleted")
+	if set := strings.Split(masters, ","); len(set) > 0 {
+		if slices.Contains(set, cluster.GetMaster0IPAndPort()) || slices.Contains(set, cluster.GetMaster0IP()) {
+			return fmt.Errorf("master0 machine cannot be deleted")
+		}
 	}
 
-	defaultPort := strconv.Itoa(int(cluster.Spec.SSH.Port))
+	defaultPort := defaultSSHPort(cluster.Spec.SSH.Port)
 
 	hostsSet := sets.NewString()
 
@@ -205,14 +256,14 @@ func deleteNodes(cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
 
 	if masters != "" && IsIPList(masters) {
 		for i := range cluster.Spec.Hosts {
-			if strings2.InList(v2.MASTER, cluster.Spec.Hosts[i].Roles) {
+			if slices.Contains(cluster.Spec.Hosts[i].Roles, v2.MASTER) {
 				cluster.Spec.Hosts[i].IPS = returnFilteredIPList(cluster.Spec.Hosts[i].IPS, strings.Split(masters, ","), defaultPort)
 			}
 		}
 	}
 	if nodes != "" && IsIPList(nodes) {
 		for i := range cluster.Spec.Hosts {
-			if strings2.InList(v2.NODE, cluster.Spec.Hosts[i].Roles) {
+			if slices.Contains(cluster.Spec.Hosts[i].Roles, v2.NODE) {
 				cluster.Spec.Hosts[i].IPS = returnFilteredIPList(cluster.Spec.Hosts[i].IPS, strings.Split(nodes, ","), defaultPort)
 			}
 		}
@@ -230,7 +281,7 @@ func deleteNodes(cluster *v2.Cluster, scaleArgs *ScaleArgs) error {
 func returnFilteredIPList(clusterIPList []string, toBeDeletedIPList []string, defaultPort string) (res []string) {
 	toBeDeletedIPList = fillIPAndPort(toBeDeletedIPList, defaultPort)
 	for _, ip := range clusterIPList {
-		if !strings2.In(ip, toBeDeletedIPList) {
+		if !slices.Contains(toBeDeletedIPList, ip) {
 			res = append(res, net.JoinHostPort(iputils.GetHostIPAndPortOrDefault(ip, defaultPort)))
 		}
 	}

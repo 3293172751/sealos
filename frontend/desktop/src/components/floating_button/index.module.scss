@@ -1,6 +1,6 @@
 .container {
   will-change: auto;
-  position: fixed;
+  position: absolute;
   bottom: 120px;
   right: 120px;
   z-index: 9999;
@@ -36,13 +36,13 @@
 
 .floatBtn {
   will-change: auto;
-  position: fixed;
+  position: absolute;
   z-index: 9999;
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: rgba(21, 37, 57, 0.6);
-  box-shadow: 0px 1.16667px 2.33333px rgba(0, 0, 0, 0.2);
+  background: rgba(28, 32, 35, 0.9);
+  box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.1);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -78,12 +78,15 @@
     height: 32px;
     background: rgba(255, 255, 255, 0.9);
     box-shadow: 0px 0px 2.33333px rgba(0, 0, 0, 0.2);
+    display: flex;
+    justify-content: center;
+    align-items: center;
   }
 }
 
 .cricleNav {
   will-change: auto;
-  position: fixed;
+  position: absolute;
   z-index: 9998;
   width: 200px;
   height: 200px;
@@ -95,7 +98,7 @@
   transform: scale(0.1);
   overflow: hidden;
   backdrop-filter: blur(150px);
-  background: rgba(21, 37, 57, 0.75);
+  background: rgba(28, 32, 35, 0.9);
   box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.1);
 
   &[data-open='true'] {
@@ -112,8 +115,6 @@
     height: 100px;
     transition: opacity 300ms ease;
     transform-origin: 100% 100%;
-    // background: rgba(21, 37, 57, 0.75);
-    // box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.1);
     overflow: hidden; // important !!!
   }
 
@@ -153,3 +154,28 @@
     left: 50px;
   }
 }
+
+// .contexify {
+//   background: rgba(239, 239, 242, 0.7);
+//   backdrop-filter: blur(80px) saturate(150%);
+//   color: #111824;
+//   padding: 6px;
+//   font-size: 12px;
+//   top: 0;
+//   left: 0;
+//   min-width: 140px;
+// }
+
+// .arrow {
+//   position: absolute;
+//   top: 100%;
+//   left: 46%;
+//   width: 0;
+//   height: 0;
+//   width: 16px;
+//   height: 9px;
+//   background: rgba(239, 239, 242, 0.7);
+//   backdrop-filter: blur(80px) saturate(150%);
+//   clip-path: polygon(50% 100%, 0 0, 100% 0);
+//   border-radius: 4px;
+// }

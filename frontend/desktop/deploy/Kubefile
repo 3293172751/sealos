@@ -3,8 +3,18 @@ USER 65532:65532
 
 COPY registry registry
 COPY manifests manifests
+COPY scripts scripts
 
-ENV cloudDomain="cloud.example.com"
+ENV cloudDomain="127.0.0.1.nip.io"
+ENV cloudPort=""
 ENV certSecretName="wildcard-cert"
+ENV regionUID="randomRegionUID"
+ENV databaseMongodbURI=""
+ENV databaseGlobalCockroachdbURI=""
+ENV databaseLocalCockroachdbURI=""
+ENV passwordSalt="randomSalt"
+ENV jwtInternal=""
+ENV jwtRegional=""
+ENV jwtGlobal=""
 
-CMD ["kubectl apply -f manifests/deploy.yaml -f manifests/ingress.yaml"]
+CMD ["bash scripts/init.sh"]

@@ -1,5 +1,5 @@
-export type ApiResp = {
+export type ApiResp<T = any, U = string> = {
   code?: number;
-  message?: string;
-  data?: any;
+  message?: U;
+  data?: T;
 };

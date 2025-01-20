@@ -1,166 +1,192 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as echarts from 'echarts';
-import { printMemory } from '@/utils/tools';
 import { useGlobalStore } from '@/store/global';
+import { MonitorDataResult } from '@/types/monitor';
+import dayjs from 'dayjs';
+
+const map = {
+  blue: {
+    backgroundColor: {
+      type: 'linear',
+      x: 0,
+      y: 0,
+      x2: 0,
+      y2: 1,
+      colorStops: [
+        {
+          offset: 0,
+          color: 'rgba(3, 190, 232, 0.42)' // 0% 处的颜色
+        },
+        {
+          offset: 1,
+          color: 'rgba(0, 182, 240, 0)'
+        }
+      ],
+      global: false // 缺省为 false
+    },
+    lineColor: '#36ADEF'
+  },
+  deepBlue: {
+    backgroundColor: {
+      type: 'linear',
+      x: 0,
+      y: 0,
+      x2: 0,
+      y2: 1,
+      colorStops: [
+        {
+          offset: 0,
+          color: 'rgba(47, 112, 237, 0.42)' // 0% 处的颜色
+        },
+        {
+          offset: 1,
+          color: 'rgba(94, 159, 235, 0)'
+        }
+      ],
+      global: false
+    },
+    lineColor: '#3293EC'
+  },
+  purple: {
+    backgroundColor: {
+      type: 'linear',
+      x: 0,
+      y: 0,
+      x2: 0,
+      y2: 1,
+      colorStops: [
+        {
+          offset: 0,
+          color: 'rgba(211, 190, 255, 0.42)' // 0% 处的颜色
+        },
+        {
+          offset: 1,
+          color: 'rgba(52, 60, 255, 0)'
+        }
+      ],
+      global: false // 缺省为 false
+    },
+    lineColor: '#8172D8'
+  },
+  green: {
+    backgroundColor: {
+      type: 'linear',
+      x: 0,
+      y: 0,
+      x2: 0,
+      y2: 1,
+      colorStops: [
+        {
+          offset: 0,
+          color: 'rgba(4, 209, 148, 0.42)' // 0% 处的颜色
+        },
+        {
+          offset: 1,
+          color: 'rgba(19, 217, 181, 0)'
+        }
+      ],
+      global: false // 缺省为 false
+    },
+    lineColor: '#00A9A6',
+    max: 100
+  }
+};
 
 const PodLineChart = ({
   type,
-  cpu = 1000000,
-  data
+  data,
+  isShowLabel = false
 }: {
-  type: 'cpu' | 'memory' | 'green' | 'deepBlue';
-  cpu?: number; // cpu limit
-  data: number[];
+  type: 'blue' | 'deepBlue' | 'green' | 'purple';
+  data?: MonitorDataResult;
+  isShowLabel?: boolean;
 }) => {
   const { screenWidth } = useGlobalStore();
+  const xData =
+    data?.xData?.map((time) => (time ? dayjs(time * 1000).format('HH:mm') : '')) ||
+    new Array(30).fill(0);
+  const yData = data?.yData || new Array(30).fill('');
 
   const Dom = useRef<HTMLDivElement>(null);
   const myChart = useRef<echarts.ECharts>();
 
-  const map = {
-    cpu: {
-      backgroundColor: {
-        type: 'linear',
-        x: 0,
-        y: 0,
-        x2: 0,
-        y2: 1,
-        colorStops: [
-          {
-            offset: 0,
-            color: 'rgba(3, 190, 232, 0.42)' // 0% 处的颜色
-          },
-          {
-            offset: 1,
-            color: 'rgba(0, 182, 240, 0)'
-          }
-        ],
-        global: false // 缺省为 false
+  const optionStyle = useMemo(
+    () => ({
+      areaStyle: {
+        color: map[type].backgroundColor
       },
-      lineColor: '#36ADEF',
-      formatter: (e: any[]) => `${((e[0].value / cpu) * 100).toFixed(2)}%`
-    },
-    memory: {
-      backgroundColor: {
-        type: 'linear',
-        x: 0,
-        y: 0,
-        x2: 0,
-        y2: 1,
-        colorStops: [
-          {
-            offset: 0,
-            color: 'rgba(211, 190, 255, 0.42)' // 0% 处的颜色
-          },
-          {
-            offset: 1,
-            color: 'rgba(52, 60, 255, 0)'
-          }
-        ],
-        global: false // 缺省为 false
+      lineStyle: {
+        width: '1',
+        color: map[type].lineColor
       },
-      lineColor: '#8172D8',
-      formatter: (e: any[]) => printMemory(e[0].value)
-    },
-    green: {
-      backgroundColor: {
-        type: 'linear',
-        x: 0,
-        y: 0,
-        x2: 0,
-        y2: 1,
-        colorStops: [
-          {
-            offset: 0,
-            color: 'rgba(4, 209, 148, 0.42)' // 0% 处的颜色
-          },
-          {
-            offset: 1,
-            color: 'rgba(19, 217, 181, 0)'
-          }
-        ],
-        global: false // 缺省为 false
-      },
-      lineColor: '#00A9A6',
-      formatter: (e: any[]) => `${((e[0].value / cpu) * 100).toFixed(2)}%`
-    },
-    deepBlue: {
-      backgroundColor: {
-        type: 'linear',
-        x: 0,
-        y: 0,
-        x2: 0,
-        y2: 1,
-        colorStops: [
-          {
-            offset: 0,
-            color: 'rgba(47, 112, 237, 0.42)' // 0% 处的颜色
-          },
-          {
-            offset: 1,
-            color: 'rgba(94, 159, 235, 0)'
-          }
-        ],
-        global: false
-      },
-      lineColor: '#3293EC',
-      formatter: (e: any[]) => printMemory(e[0].value)
-    }
-  };
-
+      itemStyle: {
+        width: 1.5,
+        color: map[type].lineColor
+      }
+    }),
+    [type]
+  );
   const option = useRef({
     xAxis: {
       type: 'category',
-      show: false,
+      show: isShowLabel,
       boundaryGap: false,
-      data: data.map((_, i) => i)
+      data: xData,
+      axisLabel: {
+        show: isShowLabel
+      },
+      axisTick: {
+        show: false
+      },
+      axisLine: {
+        show: false
+      }
     },
     yAxis: {
       type: 'value',
-      show: false,
-      boundaryGap: false
+      boundaryGap: false,
+      splitNumber: 2,
+      max: 100,
+      min: 0,
+      axisLabel: {
+        show: isShowLabel
+      }
     },
     grid: {
+      containLabel: isShowLabel,
       show: false,
-      left: 5,
-      right: 5,
-      top: 5,
-      bottom: 5
+      left: 0,
+      right: isShowLabel ? 14 : 0,
+      top: 10,
+      bottom: 2
     },
     tooltip: {
       trigger: 'axis',
       axisPointer: {
         type: 'line'
       },
-      formatter: map[type].formatter
+      formatter: (params: any[]) => {
+        const axisValue = params[0]?.axisValue;
+        return `${axisValue} ${params[0]?.value || 0}%`;
+      }
     },
     series: [
       {
-        data: data,
+        data: yData,
         type: 'line',
         showSymbol: false,
         smooth: true,
         animationDuration: 300,
         animationEasingUpdate: 'linear',
-        areaStyle: {
-          color: map[type].backgroundColor
-        },
-        lineStyle: {
-          width: '1',
-          color: map[type].lineColor
-        },
-        itemStyle: {
-          width: 1.5,
-          color: map[type].lineColor
-        },
+        ...optionStyle,
         emphasis: {
-          // highlight
           disabled: true
         }
       }
     ]
   });
 
+  // init chart
   useEffect(() => {
     if (!Dom.current || myChart?.current?.getOption()) return;
     myChart.current = echarts.init(Dom.current);
@@ -170,18 +196,20 @@ const PodLineChart = ({
   // data changed, update
   useEffect(() => {
     if (!myChart.current || !myChart?.current?.getOption()) return;
-    const x = option.current.xAxis.data;
-    option.current.xAxis.data = [...x.slice(1), x[x.length - 1] + 1];
-    option.current.series[0].data = data;
+    option.current.xAxis.data = xData;
+    option.current.series[0].data = yData;
     myChart.current.setOption(option.current);
-  }, [data]);
+  }, [xData, yData]);
 
-  // cpu changed, update
+  // type changed, update
   useEffect(() => {
     if (!myChart.current || !myChart?.current?.getOption()) return;
-    option.current.tooltip.formatter = map[type].formatter;
+    option.current.series[0] = {
+      ...option.current.series[0],
+      ...optionStyle
+    };
     myChart.current.setOption(option.current);
-  }, [cpu]);
+  }, [optionStyle]);
 
   // resize chart
   useEffect(() => {
@@ -192,4 +220,4 @@ const PodLineChart = ({
   return <div ref={Dom} style={{ width: '100%', height: '100%' }} />;
 };
 
-export default PodLineChart;
+export default React.memo(PodLineChart);

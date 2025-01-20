@@ -20,12 +20,15 @@ import (
 	"context"
 	"flag"
 	"os"
+	"time"
+
+	utilcontroller "github.com/labring/operator-sdk/controller"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-
-	"github.com/labring/sealos/controllers/user/controllers/cache"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -34,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	configpkg "github.com/labring/sealos/controllers/pkg/config"
 	userv1 "github.com/labring/sealos/controllers/user/api/v1"
 	"github.com/labring/sealos/controllers/user/controllers"
 	//+kubebuilder:scaffold:imports
@@ -52,15 +56,30 @@ func init() {
 }
 
 func main() {
-	var metricsAddr string
-	var enableLeaderElection bool
-	var probeAddr string
+	var (
+		metricsAddr                string
+		enableLeaderElection       bool
+		probeAddr                  string
+		configFilePath             string
+		rateLimiterOptions         utilcontroller.RateLimiterOptions
+		syncPeriod                 time.Duration
+		minRequeueDuration         time.Duration
+		maxRequeueDuration         time.Duration
+		operationReqExpirationTime time.Duration
+		operationReqRetentionTime  time.Duration
+	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-
+	flag.DurationVar(&syncPeriod, "sync-period", time.Hour*24*30, "SyncPeriod determines the minimum frequency at which watched resources are reconciled.")
+	flag.DurationVar(&minRequeueDuration, "min-requeue-duration", time.Hour*24, "The minimum duration between requeue options of a resource.")
+	flag.DurationVar(&maxRequeueDuration, "max-requeue-duration", time.Hour*24*2, "The maximum duration between requeue options of a resource.")
+	flag.DurationVar(&operationReqExpirationTime, "operation-req-expiration-time", time.Minute*3, "Sets the expiration time duration for an operation request. By default, the duration is set to 3 minutes.")
+	flag.DurationVar(&operationReqRetentionTime, "operation-req-retention-time", time.Minute*3, "Sets the retention time duration for an operation request. By default, the duration is set to 3 minutes.")
+	flag.StringVar(&configFilePath, "config-file-path", "/config.yaml", "The path to the configuration file.")
+	rateLimiterOptions.BindFlags(flag.CommandLine)
 	opts := zap.Options{
 		Development: true,
 	}
@@ -70,12 +89,19 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		Port:                   9443,
+		Scheme: scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: metricsAddr,
+		},
+		//WebhookServer: webhook.NewServer(webhook.Options{
+		//	Port: 9443,
+		//}),
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "785548a1.sealos.io",
+		Cache: cache.Options{
+			SyncPeriod: &syncPeriod,
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -92,34 +118,25 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-	if err = (&controllers.UserReconciler{}).SetupWithManager(mgr); err != nil {
+
+	// Load the configuration file
+	config := &controllers.Config{}
+	if err := configpkg.LoadConfig(configFilePath, config); err != nil {
+		setupLog.Error(err, "unable to load configuration file")
+		os.Exit(1)
+	}
+
+	// Set the configuration
+	if err := setConfigToEnv(*config); err != nil {
+		setupLog.Error(err, "unable to set configuration to environment variables")
+		os.Exit(1)
+	}
+
+	if err = (&controllers.UserReconciler{}).SetupWithManager(mgr, rateLimiterOptions, minRequeueDuration, maxRequeueDuration); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "User")
 		os.Exit(1)
 	}
-	if err = (&controllers.UserGroupReconciler{}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "UserGroup")
-		os.Exit(1)
-	}
-	if err = (&controllers.UserGroupBindingReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "UserGroupBinding")
-		os.Exit(1)
-	}
 
-	//if err = (&controllers.UserExpirationReconciler{
-	//	Client: mgr.GetClient(),
-	//	Scheme: mgr.GetScheme(),
-	//}).SetupWithManager(mgr); err != nil {
-	//	setupLog.Error(err, "unable to create controller", "controller", "Secret")
-	//	os.Exit(1)
-	//}
-
-	if err = cache.SetupCache(mgr); err != nil {
-		setupLog.Error(err, "unable to cache controller")
-		os.Exit(1)
-	}
 	if os.Getenv("DISABLE_WEBHOOKS") == "true" {
 		setupLog.Info("disable all webhooks")
 	} else {
@@ -127,17 +144,30 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "User")
 			os.Exit(1)
 		}
-		setupLog.Info("add ug and ugb webhooks")
-		if err = (&userv1.UserGroup{}).SetupWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "UserGroup")
-			os.Exit(1)
-		}
-		if err = (&userv1.UserGroupBinding{}).SetupWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "UserGroupBinding")
-			os.Exit(1)
-		}
 	}
 
+	if err = (&controllers.OperationReqReconciler{}).SetupWithManager(mgr, rateLimiterOptions, operationReqExpirationTime, operationReqRetentionTime); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Operationrequest")
+		os.Exit(1)
+	}
+	if err = (&userv1.Operationrequest{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "Operationrequest")
+		os.Exit(1)
+	}
+	if err = (&controllers.DeleteRequestReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DeleteRequest")
+		os.Exit(1)
+	}
+	//if err = (&controllers.AdaptRoleBindingReconciler{
+	//	Client: mgr.GetClient(),
+	//	Scheme: mgr.GetScheme(),
+	//}).SetupWithManager(mgr); err != nil {
+	//	setupLog.Error(err, "unable to create controller", "controller", "AdaptRoleBinding")
+	//	os.Exit(1)
+	//}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -155,4 +185,11 @@ func main() {
 		setupLog.Error(err, "failed to running manager")
 		os.Exit(1)
 	}
+}
+
+func setConfigToEnv(cfg controllers.Config) error {
+	if err := os.Setenv("SEALOS_CLOUD_HOST", cfg.Global.CloudDomain); err != nil {
+		return err
+	}
+	return os.Setenv("APISERVER_PORT", cfg.Kube.APIServerPort)
 }

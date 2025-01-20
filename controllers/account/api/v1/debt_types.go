@@ -25,30 +25,56 @@ const (
 	DebtStatusSmall  DebtStatusType = "Small"
 	DebtStatusMedium DebtStatusType = "Medium"
 	DebtStatusLarge  DebtStatusType = "Large"
-	DebtPrefix                      = "debt-"
-	NormalPrice                     = 0
-	// SmallBlockWaitSecond 7 days
-	SmallBlockWaitSecond = 7 * 24 * 60 * 60
-	// MediumBlockWaitSecond 4 days ,but now not use.
-	//MediumBlockWaitSecond = 4 * 24 * 60 * 60
+
+	NormalPeriod              DebtStatusType = "NormalPeriod"
+	WarningPeriod             DebtStatusType = "WarningPeriod"
+	ApproachingDeletionPeriod DebtStatusType = "ApproachingDeletionPeriod"
+	ImminentDeletionPeriod    DebtStatusType = "ImminentDeletionPeriod"
+	FinalDeletionPeriod       DebtStatusType = "FinalDeletionPeriod"
+
+	PreWarningPeriod DebtStatusType = "PreWarningPeriod"
+	SuspendPeriod    DebtStatusType = "SuspendPeriod"
+	RemovedPeriod    DebtStatusType = "RemovedPeriod"
+
+	DebtPrefix = "debt-"
+	DaySecond  = 24 * 60 * 60
 )
 
 type DebtStatusType string
 
 var DefaultDebtConfig = map[DebtStatusType]int64{
-	DebtStatusNormal: NormalPrice,
-	DebtStatusSmall:  SmallBlockWaitSecond,
+	//DebtStatusNormal: NormalPrice,
+
+	//DebtStatusSmall:  SmallBlockWaitSecond,
 }
+
+const DebtNamespaceAnnoStatusKey = "debt.sealos/status"
+
+const (
+	NormalDebtNamespaceAnnoStatus           = "Normal"
+	SuspendDebtNamespaceAnnoStatus          = "Suspend"
+	ResumeDebtNamespaceAnnoStatus           = "Resume"
+	TerminateSuspendDebtNamespaceAnnoStatus = "TerminateSuspend"
+)
 
 // DebtSpec defines the desired state of Debt
 type DebtSpec struct {
 	UserName string `json:"userName,omitempty"`
+	UserID   string `json:"userID,omitempty"`
 }
 
 // DebtStatus defines the observed state of Debt
 type DebtStatus struct {
-	LastUpdateTimestamp int64          `json:"lastUpdateTimestamp,omitempty"`
-	AccountDebtStatus   DebtStatusType `json:"status,omitempty"`
+	LastUpdateTimestamp int64              `json:"lastUpdateTimestamp,omitempty"`
+	DebtStatusRecords   []DebtStatusRecord `json:"debtStatusRecords,omitempty"`
+	AccountDebtStatus   DebtStatusType     `json:"status,omitempty"`
+}
+
+// DebtStatusRecord defines the observed state of Debt
+type DebtStatusRecord struct {
+	LastStatus    DebtStatusType `json:"lastDebtStatus,omitempty"`
+	CurrentStatus DebtStatusType `json:"currentStatus,omitempty"`
+	UpdateTime    metav1.Time    `json:"updateTime,omitempty"`
 }
 
 //+kubebuilder:object:root=true

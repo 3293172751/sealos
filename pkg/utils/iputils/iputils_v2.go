@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sort"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	netutils "k8s.io/utils/net"
 
 	"github.com/labring/sealos/pkg/utils/logger"
 )
@@ -104,6 +106,9 @@ func ListLocalHostAddrs() (*[]net.Addr, error) {
 		logger.Warn("net.Interfaces failed, err:", err.Error())
 		return nil, err
 	}
+	sort.Slice(netInterfaces, func(i, j int) bool {
+		return netInterfaces[i].Index < netInterfaces[j].Index
+	})
 	var allAddrs []net.Addr
 	for i := 0; i < len(netInterfaces); i++ {
 		if (netInterfaces[i].Flags & net.FlagUp) == 0 {
@@ -243,14 +248,22 @@ func NextIP(ip string) net.IP {
 	return i.Add(i, big.NewInt(1)).Bytes()
 }
 
-func Contains(sub, s string) (bool, error) {
-	_, ipNet, err := net.ParseCIDR(sub)
+func Contains(subnetStr, s string) (bool, error) {
+	subnets, err := netutils.ParseCIDRs(strings.Split(subnetStr, ","))
 	if err != nil {
 		return false, err
 	}
+
 	ip := net.ParseIP(s)
 	if ip == nil {
 		return false, fmt.Errorf("%s is not a valid IP address", s)
 	}
-	return ipNet.Contains(ip), nil
+
+	for _, subnet := range subnets {
+		if subnet.Contains(ip) {
+			return true, nil
+		}
+	}
+
+	return false, err
 }

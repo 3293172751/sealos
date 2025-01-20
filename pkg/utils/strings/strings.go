@@ -17,36 +17,25 @@ limitations under the License.
 package strings
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
-	"net"
+	"os"
+	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/labring/sealos/pkg/constants"
+	"github.com/labring/sealos/pkg/template"
+	"github.com/labring/sealos/pkg/utils/file"
+
+	"golang.org/x/exp/slices"
 
 	"github.com/labring/sealos/pkg/utils/logger"
 )
 
-// In returns if the key is in the slice.
-func In(key string, slice []string) bool {
+func NotInIPList(slice []string, key string) bool {
 	for _, s := range slice {
-		if key == s {
-			return true
-		}
-	}
-	return false
-}
-
-func InList(key string, slice []string) bool {
-	return In(key, slice)
-}
-
-func NotInIPList(key string, slice []string) bool {
-	for _, s := range slice {
-		if s == "" {
-			continue
-		}
 		if key == strings.Split(s, ":")[0] {
 			return false
 		}
@@ -54,68 +43,10 @@ func NotInIPList(key string, slice []string) bool {
 	return true
 }
 
-func ReduceIPList(src, dst []string) []string {
-	var ipList []string
-	for _, ip := range src {
-		if In(ip, dst) {
-			ipList = append(ipList, ip)
-		}
-	}
-	return ipList
-}
-
-func AppendIPList(src, dst []string) []string {
-	for _, ip := range dst {
-		if !In(ip, src) {
-			src = append(src, ip)
-		}
-	}
-	return src
-}
-
-func IPListRemove(ss []string, s string) (result []string) {
-	for _, v := range ss {
-		if v != s {
-			result = append(result, v)
-		}
-	}
-	return
-}
-func SortIPList(iplist []string) {
-	realIPs := make([]net.IP, 0, len(iplist))
-	for _, ip := range iplist {
-		realIPs = append(realIPs, net.ParseIP(ip))
-	}
-
-	sort.Slice(realIPs, func(i, j int) bool {
-		return bytes.Compare(realIPs[i], realIPs[j]) < 0
-	})
-
-	for i := range realIPs {
-		iplist[i] = realIPs[i].String()
-	}
-}
-
-func Reverse(s []string) []string {
-	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
-		s[i], s[j] = s[j], s[i]
-	}
-	return s
-}
-
-func ContainList(list []string, toComplete string) (containerList []string) {
-	for i := range list {
-		if strings.Contains(list[i], toComplete) {
-			containerList = append(containerList, list[i])
-		}
-	}
-	return
-}
+var emptyLineRe = regexp.MustCompile(`^\s*$`)
 
 func IsEmptyLine(str string) bool {
-	re := regexp.MustCompile(`^\s*$`)
-
-	return re.MatchString(str)
+	return emptyLineRe.MatchString(str)
 }
 
 func TrimWS(str string) string {
@@ -126,18 +57,18 @@ func TrimSpaceWS(str string) string {
 	return strings.TrimRight(str, " \n\t")
 }
 
-func RemoveSliceEmpty(list []string) (fList []string) {
+func FilterNonEmptyFromSlice(list []string) (ret []string) {
 	for i := range list {
 		if strings.TrimSpace(list[i]) != "" {
-			fList = append(fList, list[i])
+			ret = append(ret, list[i])
 		}
 	}
 	return
 }
 
-func SplitRemoveEmpty(s, sep string) []string {
+func FilterNonEmptyFromString(s, sep string) []string {
 	data := strings.Split(s, sep)
-	return RemoveSliceEmpty(data)
+	return FilterNonEmptyFromSlice(data)
 }
 
 // RemoveDuplicate removes duplicate entry in the list.
@@ -153,24 +84,35 @@ func RemoveDuplicate(list []string) []string {
 	return result
 }
 
-// RemoveStrSlice remove dst element from src slice
-func RemoveStrSlice(src, dst []string) []string {
-	var ipList []string
-	for _, ip := range src {
-		if !In(ip, dst) {
-			ipList = append(ipList, ip)
+// RemoveSubSlice remove dst element from src slice
+func RemoveSubSlice(src, dst []string) []string {
+	var ret []string
+	for _, s := range src {
+		if !slices.Contains(dst, s) {
+			ret = append(ret, s)
 		}
 	}
-	return ipList
+	return ret
 }
 
-func SliceRemoveStr(ss []string, s string) (result []string) {
+func RemoveFromSlice(ss []string, s string) (result []string) {
 	for _, v := range ss {
 		if v != s {
 			result = append(result, v)
 		}
 	}
 	return
+}
+
+func Merge(ss []string, s string) []string {
+	var ret []string
+	for i := range ss {
+		if ss[i] != s {
+			ret = append(ret, ss[i])
+		}
+	}
+	ret = append(ret, s)
+	return ret
 }
 
 func FormatSize(size int64) (Size string) {
@@ -198,7 +140,7 @@ func IsLetterOrNumber(k string) bool {
 	return true
 }
 
-func RenderShellFromEnv(shell string, envs map[string]string) string {
+func RenderShellWithEnv(shell string, envs map[string]string) string {
 	var env string
 	for k, v := range envs {
 		env = fmt.Sprintf("%s%s=\"%s\" ", env, k, v)
@@ -209,7 +151,7 @@ func RenderShellFromEnv(shell string, envs map[string]string) string {
 	return fmt.Sprintf("export %s; %s", env, shell)
 }
 
-func RenderTextFromEnv(text string, envs map[string]string) string {
+func RenderTextWithEnv(text string, envs map[string]string) string {
 	replaces := make(map[string]string, 0)
 	for k, v := range envs {
 		replaces[fmt.Sprintf("$(%s)", k)] = v
@@ -221,6 +163,67 @@ func RenderTextFromEnv(text string, envs map[string]string) string {
 		text = strings.ReplaceAll(text, o, n)
 	}
 	return text
+}
+
+func RenderTemplatesWithEnv(filePaths string, envs map[string]string) error {
+	var (
+		renderEtc       = filepath.Join(filePaths, constants.EtcDirName)
+		renderScripts   = filepath.Join(filePaths, constants.ScriptsDirName)
+		renderManifests = filepath.Join(filePaths, constants.ManifestsDirName)
+	)
+
+	for _, dir := range []string{renderEtc, renderScripts, renderManifests} {
+		logger.Debug("render env dir: %s", dir)
+		if !file.IsExist(dir) {
+			logger.Debug("Directory %s does not exist, skipping", dir)
+			continue
+		}
+
+		if err := filepath.Walk(dir, func(path string, info os.FileInfo, errIn error) error {
+			if errIn != nil {
+				return errIn
+			}
+			if info.IsDir() || !strings.HasSuffix(info.Name(), constants.TemplateSuffix) {
+				return nil
+			}
+
+			fileName := strings.TrimSuffix(path, constants.TemplateSuffix)
+			if file.IsExist(fileName) {
+				if err := os.Remove(fileName); err != nil {
+					logger.Warn("failed to remove existing file [%s]: %v", fileName, err)
+				}
+			}
+
+			writer, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, os.ModePerm)
+			if err != nil {
+				return fmt.Errorf("failed to open file [%s] for rendering: %v", path, err)
+			}
+			defer writer.Close()
+
+			body, err := file.ReadAll(path)
+			if err != nil {
+				return err
+			}
+
+			t, isOk, err := template.TryParse(string(body))
+			if isOk {
+				if err != nil {
+					return fmt.Errorf("failed to create template: %s %v", path, err)
+				}
+				if err := t.Execute(writer, envs); err != nil {
+					return fmt.Errorf("failed to render env template: %s %v", path, err)
+				}
+			} else {
+				return errors.New("parse template failed")
+			}
+
+			return nil
+		}); err != nil {
+			return fmt.Errorf("failed to render templates in directory %s: %v", dir, err)
+		}
+	}
+
+	return nil
 }
 
 func TrimQuotes(s string) string {

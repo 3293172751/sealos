@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containers/common/libimage"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -124,10 +125,9 @@ func newDiffCommand() *cobra.Command {
 		filterFn: excludeInitTrees,
 	}
 	cmd := &cobra.Command{
-		Use:    "diff",
-		Short:  "Inspect changes to the object's file systems",
-		Hidden: true,
-		Args:   cobra.ExactArgs(2),
+		Use:   "diff",
+		Short: "Inspect changes to the object's file systems",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := opts.ValidateAndSetDefaults(); err != nil {
 				return err
@@ -141,7 +141,9 @@ func newDiffCommand() *cobra.Command {
 	}
 	opts.RegisterFlags(cmd.Flags())
 	opts.patchOption.RegisterFlags(cmd.Flags())
+	cmd.Flags().AddFlagSet(getPlatformFlags())
 	cmd.SetUsageTemplate(UsageTemplate())
+
 	return cmd
 }
 
@@ -205,7 +207,7 @@ func runDiff(c *cobra.Command, args []string, opts *diffOption) error {
 
 	ctx := getContext()
 	if diffType == DiffImage {
-		if args, err = r.pullOrLoadImages(ctx, args...); err != nil {
+		if args, err = r.PullOrLoadImages(ctx, args, libimage.CopyOptions{}); err != nil {
 			return err
 		}
 	}

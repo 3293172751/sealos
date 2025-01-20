@@ -3,39 +3,11 @@ import { ApiResp } from '@/services/kubernet';
 import { authSession } from '@/services/backend/auth';
 import { getK8s } from '@/services/backend/kubernetes';
 import { jsonRes } from '@/services/backend/response';
+import { appDeployKey } from '@/constants/app';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
   try {
-    const { k8sApp, namespace } = await getK8s({
-      kubeconfig: await authSession(req.headers)
-    });
-
-    const domain = process.env.SEALOS_DOMAIN || 'cloud.sealos.io';
-
-    const response = await Promise.allSettled([
-      k8sApp.listNamespacedDeployment(
-        namespace,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        `${domain}/app-deploy-manager`
-      ),
-      k8sApp.listNamespacedStatefulSet(
-        namespace,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        `${domain}/app-deploy-manager`
-      )
-    ]);
-
-    const apps = response
-      .filter((item) => item.status === 'fulfilled')
-      .map((item: any) => item?.value?.body?.items)
-      .filter((item) => item)
-      .flat();
+    const apps = await GetApps({ req });
 
     jsonRes(res, { data: apps });
   } catch (err: any) {
@@ -44,4 +16,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       error: err
     });
   }
+}
+
+export async function GetApps({ req }: { req: NextApiRequest }) {
+  const { k8sApp, namespace } = await getK8s({
+    kubeconfig: await authSession(req.headers)
+  });
+
+  const response = await Promise.allSettled([
+    k8sApp.listNamespacedDeployment(
+      namespace,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      appDeployKey
+    ),
+    k8sApp.listNamespacedStatefulSet(
+      namespace,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      appDeployKey
+    )
+  ]);
+
+  const apps = response
+    .filter((item) => item.status === 'fulfilled')
+    .map((item: any) => item?.value?.body?.items)
+    .filter((item) => item)
+    .flat();
+
+  return apps;
 }

@@ -18,6 +18,8 @@ package apply
 
 import (
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestNewApplierFromResetArgs(t *testing.T) {
@@ -33,22 +35,8 @@ func TestNewApplierFromResetArgs(t *testing.T) {
 			name: "error",
 			args: args{
 				args: &ResetArgs{
-					Cluster: &Cluster{},
-					SSH:     &SSH{},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "error duplicate",
-			args: args{
-				args: &ResetArgs{
-					Cluster: &Cluster{
-						Masters:     "192.158.1.1",
-						Nodes:       "192.158.1.1",
-						ClusterName: "default",
-					},
-					SSH: &SSH{},
+					ClusterName: &ClusterName{},
+					SSH:         &SSH{},
 				},
 			},
 			wantErr: true,
@@ -57,20 +45,20 @@ func TestNewApplierFromResetArgs(t *testing.T) {
 			name: "success",
 			args: args{
 				args: &ResetArgs{
-					Cluster: &Cluster{
-						Masters:     "192.158.1.1",
-						Nodes:       "192.158.1.2",
+					ClusterName: &ClusterName{
 						ClusterName: "default",
 					},
 					SSH: &SSH{},
 				},
 			},
-			wantErr: false,
+			wantErr: true, // clusterfile must exist
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewApplierFromResetArgs(tt.args.args)
+			_, err := NewApplierFromResetArgs(&cobra.Command{
+				Use: "mock",
+			}, tt.args.args)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewApplierFromResetArgs() error = %v, wantErr %v", err, tt.wantErr)
 				return

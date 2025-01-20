@@ -23,12 +23,11 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// +kubebuilder:validation:Enum=nginx;apisix
+// +kubebuilder:validation:Enum=nginx
 type IngressType string
 
 const (
-	Nginx  IngressType = "nginx"
-	Apisix IngressType = "apisix"
+	Nginx IngressType = "nginx"
 )
 
 // TerminalSpec defines the desired state of Terminal
@@ -56,6 +55,8 @@ type TerminalSpec struct {
 // TerminalStatus defines the observed state of Terminal
 type TerminalStatus struct {
 	AvailableReplicas int32  `json:"availableReplicas"`
+	ServiceName       string `json:"serviceName"`
+	SecretHeader      string `json:"secretHeader"`
 	Domain            string `json:"domain"`
 }
 
@@ -64,7 +65,6 @@ type TerminalStatus struct {
 //+kubebuilder:printcolumn:name="User",type=string,JSONPath=".spec.user"
 //+kubebuilder:printcolumn:name="Keepalived",type=string,JSONPath=".spec.keepalived"
 //+kubebuilder:printcolumn:name="Domain",type=string,JSONPath=".status.domain"
-//+kubebuilder:printcolumn:name="APIServer",priority=1,type=string,JSONPath=".spec.apiServer"
 //+kubebuilder:printcolumn:name="LastUpdateTime",priority=1,type=string,JSONPath=".metadata.annotations.lastUpdateTime"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 

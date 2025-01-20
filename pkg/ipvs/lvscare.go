@@ -17,6 +17,8 @@ package ipvs
 import (
 	"fmt"
 
+	"github.com/labring/sealos/pkg/types/v1beta1"
+
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,17 +32,20 @@ const (
 	LvsCareCommand = "/usr/bin/lvscare"
 )
 
-func LvsStaticPodYaml(vip string, masters []string, image, name string) (string, error) {
+func LvsStaticPodYaml(vip string, masters []string, image, name string, options []string) (string, error) {
 	if vip == "" || len(masters) == 0 {
 		return "", fmt.Errorf("vip and mster not allow empty")
 	}
 	if image == "" {
-		image = constants.DefaultLvsCareImage
+		image = v1beta1.DefaultLvsCareImage
 	}
 	args := []string{"care", "--vs", vip, "--health-path", "/healthz", "--health-schem", "https"}
 	for _, m := range masters {
 		args = append(args, "--rs")
 		args = append(args, m)
+	}
+	if len(options) > 0 {
+		args = append(args, options...)
 	}
 	flag := true
 	pod := componentPod(v1.Container{
@@ -51,14 +56,14 @@ func LvsStaticPodYaml(vip string, masters []string, image, name string) (string,
 		ImagePullPolicy: v1.PullIfNotPresent,
 		SecurityContext: &v1.SecurityContext{Privileged: &flag},
 	})
-	yaml, err := podToYaml(pod)
+	yaml, err := PodToYaml(pod)
 	if err != nil {
 		return "", err
 	}
 	return string(yaml), nil
 }
 
-func podToYaml(pod v1.Pod) ([]byte, error) {
+func PodToYaml(pod v1.Pod) ([]byte, error) {
 	codecs := scheme.Codecs
 	gv := v1.SchemeGroupVersion
 	const mediaType = runtime.ContentTypeYAML
@@ -106,9 +111,10 @@ func componentPod(container v1.Container) v1.Pod {
 			Namespace: metav1.NamespaceSystem,
 		},
 		Spec: v1.PodSpec{
-			Containers:  []v1.Container{container},
-			HostNetwork: true,
-			Volumes:     volumes,
+			Containers:        []v1.Container{container},
+			HostNetwork:       true,
+			Volumes:           volumes,
+			PriorityClassName: "system-node-critical",
 		},
 	}
 }

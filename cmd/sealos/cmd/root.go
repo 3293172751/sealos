@@ -16,16 +16,18 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
+
+	sreglog "github.com/labring/sreg/pkg/utils/logger"
+	"github.com/spf13/cobra"
+	"k8s.io/kubectl/pkg/util/templates"
 
 	"github.com/labring/sealos/pkg/buildah"
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/system"
 	"github.com/labring/sealos/pkg/utils/file"
 	"github.com/labring/sealos/pkg/utils/logger"
-
-	"github.com/spf13/cobra"
-	"k8s.io/kubectl/pkg/util/templates"
 )
 
 var (
@@ -85,7 +87,7 @@ func init() {
 		{
 			Message: "Experimental Commands:",
 			Commands: []*cobra.Command{
-				newRegistryCmd(),
+				newRegistryCmd(rootCmd.Name()),
 			},
 		},
 		{
@@ -94,14 +96,15 @@ func init() {
 		},
 	}
 	groups.Add(rootCmd)
-	filters := []string{}
+	filters := []string{"options"}
 	templates.ActsAsRootCommand(rootCmd, filters, groups...)
-	rootCmd.AddCommand(system.NewConfigCmd())
+
+	rootCmd.AddCommand(system.NewEnvCmd(constants.AppName))
+	rootCmd.AddCommand(optionsCommand(os.Stdout))
 }
 
-// add unrelated command names that don't required buildah sdk.
-func setCommandUnrelatedToBuildah(cmd *cobra.Command) {
-	buildah.AddUnrelatedCommandNames(cmd.Name())
+func setRequireBuildahAnnotation(cmd *cobra.Command) {
+	buildah.SetRequireBuildahAnnotation(cmd)
 }
 
 func onBootOnDie() {
@@ -114,15 +117,32 @@ func onBootOnDie() {
 
 	var rootDirs = []string{
 		constants.LogPath(),
-		constants.Workdir(),
+		constants.WorkDir(),
 	}
 	errExit(file.MkDirs(rootDirs...))
+
 	logger.CfgConsoleAndFileLogger(debug, constants.LogPath(), "sealos", false)
+	sreglog.CfgConsoleAndFileLogger(debug, constants.LogPath(), "sealos", false)
 }
 
 func errExit(err error) {
 	if err != nil {
-		logger.Error(err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func optionsCommand(out io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "options",
+		Short: "Print the list of flags inherited by all commands",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Usage()
+		},
+	}
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+
+	templates.UseOptionsTemplates(cmd)
+	return cmd
 }

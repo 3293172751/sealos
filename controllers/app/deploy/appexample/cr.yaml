@@ -1,3 +1,17 @@
+# Copyright © 2023 sealos.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 apiVersion: app.sealos.io/v1
 kind: App
 metadata:
@@ -5,7 +19,7 @@ metadata:
   namespace: app-system
 spec:
   data:
-    desc: sealos Cloud Kubernetes Dashboard
+    desc: Sealos Cloud Kubernetes Dashboard
     url: ""
   icon: /images/kubernetes.svg
   menuData:
@@ -13,6 +27,7 @@ spec:
     nameColor: text-black
   name: Kubernetes-Dashboard
   type: iframe
+  displayType: hide
 ---
 apiVersion: app.sealos.io/v1
 kind: App
@@ -25,11 +40,9 @@ spec:
     url: ""
   icon: /images/pgadmin.svg
   menuData:
-    helpDocs: https://www.sealos.io/docs/cloud/apps/postgres/
-    helpDropDown: false
-    nameColor: text-black
   name: Postgres
   type: app
+  displayType: normal
 ---
 apiVersion: app.sealos.io/v1
 kind: App
@@ -42,11 +55,9 @@ spec:
     url: ""
   icon: /images/infraicon/scp.png
   menuData:
-    helpDocs: https://www.sealos.io/docs/cloud/apps/scp/
-    helpDropDown: false
-    nameColor: '#0073D7'
   name: sealos cloud provider
   type: app
+  displayType: more
 ---
 apiVersion: app.sealos.io/v1
 kind: App
@@ -59,28 +70,9 @@ spec:
     url: https://www.sealos.io/docs/cloud/Intro
   icon: /images/sealos.svg
   menuData:
-    helpDocs: "false"
-    helpDropDown: false
-    nameColor: text-black
   name: Sealos Document
   type: iframe
----
-apiVersion: app.sealos.io/v1
-kind: App
-metadata:
-  name: sealos-imagehub
-  namespace: app-system
-spec:
-  data:
-    desc: Image Hub
-    url: https://hub.sealos.io/
-  icon: /images/icons/app_store.png
-  menuData:
-    helpDocs: https://www.sealos.io/docs/cloud/apps/appstore/
-    helpDropDown: false
-    nameColor: text-black
-  name: Image Hub
-  type: iframe
+  displayType: normal
 ---
 apiVersion: app.sealos.io/v1
 kind: App
@@ -89,15 +81,16 @@ metadata:
   namespace: app-system
 spec:
   data:
-    desc: sealos CLoud Terminal
+    desc: sealos Terminal
     url: ""
   icon: /images/terminal.svg
   menuData:
-    helpDocs: https://www.sealos.io/docs/cloud/apps/terminal/
-    helpDropDown: false
-    nameColor: text-black
   name: Terminal
   type: iframe
+  displayType: normal
+  i18n:
+    zh-Hans:
+      name: 终端
 ---
 apiVersion: app.sealos.io/v1
 kind: App
@@ -111,6 +104,4 @@ spec:
     url: "https://deploy.cloud.sealos.io"
     desc: Deploy Manager
   menuData:
-    nameColor: text-black
-    helpDropDown: false
-    helpDocs:
+  displayType: normal

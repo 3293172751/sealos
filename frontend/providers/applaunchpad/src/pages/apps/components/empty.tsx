@@ -3,9 +3,11 @@ import { useRouter } from 'next/router';
 import { Button, Box } from '@chakra-ui/react';
 import styles from './empty.module.scss';
 import MyIcon from '@/components/Icon';
+import { useTranslation } from 'next-i18next';
 
 const Empty = () => {
   const router = useRouter();
+  const { t } = useTranslation();
   return (
     <Box
       className={styles.empty}
@@ -13,18 +15,17 @@ const Empty = () => {
       flexDirection="column"
       alignItems="center"
       justifyContent="center"
-      bg={'#F7F8FA'}
+      bg={'#F3F4F5'}
     >
       <MyIcon name={'noEvents'} color={'transparent'} width={'80px'} height={'80px'} />
-      <Box py={8}>您还没有新建应用</Box>
+      <Box py={8}>{t("You haven't created any application yet")}</Box>
       <Button
         w={155}
         mt={5}
-        variant={'primary'}
-        leftIcon={<MyIcon name="plus" />}
         onClick={() => router.push('/app/edit')}
+        leftIcon={<MyIcon name={'plus'} w={'20px'} fill={'#FFF'} />}
       >
-        新建应用
+        {t('Create Application')}
       </Button>
     </Box>
   );

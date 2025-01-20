@@ -1,16 +1,21 @@
 import Terminal from '@/components/terminal';
 import request from '@/service/request';
-import useSessionStore from '@/stores/session';
-import { Box, Flex } from '@chakra-ui/react';
+import useSessionStore from '@/store/session';
+import { Box, Flex, Spinner, useToast } from '@chakra-ui/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { createSealosApp, sealosApp } from 'sealos-desktop-sdk/app';
 import styles from './index.module.scss';
 
-export default function Index() {
+type ServiceEnv = {
+  site: string;
+};
+
+export default function Index(props: ServiceEnv) {
   const { setSession, isUserLogin } = useSessionStore();
   const [url, setUrl] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const toast = useToast();
 
   useEffect(() => {
     return createSealosApp();
@@ -19,9 +24,11 @@ export default function Index() {
   useEffect(() => {
     const initApp = async () => {
       try {
-        const result = await sealosApp.getUserInfo();
+        const result = await sealosApp.getSession();
         setSession(result);
-      } catch (error) {}
+      } catch (error) {
+        console.log('App is not running in desktop');
+      }
     };
     initApp();
   }, [setSession]);
@@ -30,8 +37,10 @@ export default function Index() {
     onSuccess: (res) => {
       if (res?.data?.code === 200 && res?.data?.data) {
         const url = res?.data?.data;
-        // setIsLoading(false)
-        // setUrl(url)
+        if (process.env.NODE_ENV === 'development') {
+          setIsLoading(false);
+          setUrl(url);
+        }
         fetch(url, { mode: 'cors' })
           .then((res) => {
             if (res.status === 200) {
@@ -42,8 +51,21 @@ export default function Index() {
           .catch((err) => {});
       }
     },
-    onError: (err) => {
-      console.log(err, 'err');
+    onError(err: any) {
+      if (err?.data?.code === 500 && err?.data?.data) {
+        const reason = err?.data?.data?.body?.reason;
+        if (reason && reason?.startsWith('40001')) {
+          toast({
+            position: 'top',
+            description: 'Insufficient balance',
+            status: 'error',
+            duration: 8000,
+            isClosable: true
+          });
+          setIsLoading(false);
+          setUrl('/error');
+        }
+      }
     },
     refetchInterval: url === '' ? 500 : false,
     enabled: url === ''
@@ -51,22 +73,42 @@ export default function Index() {
 
   if (isLoading) {
     return (
-      <Flex w="100%" h="100%" color="white" bg="#2b2b2b" overflow={'hidden'}>
-        <Box w="200px" backgroundColor={'#2C3035'}></Box>
-        <Box w="100%" backgroundColor={'#2b2b2b'}></Box>
+      <Flex w="100%" h="100%" color="white" bg="#2b2b2b" overflow={'hidden'} position={'relative'}>
+        <Box w="100%" backgroundColor={'#2b2b2b'} position={'relative'}>
+          <Box position={'absolute'} top="50%" left={'50%'} transform={'translate(-50%, -50%)'}>
+            <Spinner
+              thickness="4px"
+              speed="0.65s"
+              emptyColor="gray.600"
+              color="gray.800"
+              size="xl"
+            />
+          </Box>
+        </Box>
       </Flex>
     );
   }
 
   if (!isUserLogin() && process.env.NODE_ENV === 'production') {
-    const tempUrl = process.env.NEXT_PUBLIC_SITE;
-
     return (
       <div className={styles.err}>
-        please go to &nbsp;<a href={tempUrl}>{tempUrl}</a>
+        please go to &nbsp;<a href={props.site}>{props.site}</a>
       </div>
     );
   }
 
-  return <div className={styles.container}>{!!url && <Terminal url={url} />}</div>;
+  return (
+    <div className={styles.container}>{!!url && <Terminal url={url} site={props.site} />}</div>
+  );
+}
+
+export async function getServerSideProps() {
+  // cloud domain postmessage white list
+  const postMessageSite = 'https://' + process.env?.SITE;
+
+  return {
+    props: {
+      site: postMessageSite
+    }
+  };
 }

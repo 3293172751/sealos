@@ -16,20 +16,18 @@ package bootstrap
 
 import (
 	"fmt"
-	"path"
-	"sync"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/labring/sealos/pkg/constants"
-	"github.com/labring/sealos/pkg/passwd"
-	v2 "github.com/labring/sealos/pkg/types/v1beta1"
-	"github.com/labring/sealos/pkg/utils/file"
+	"github.com/labring/sealos/pkg/registry/helpers"
+	"github.com/labring/sealos/pkg/registry/password"
 	"github.com/labring/sealos/pkg/utils/iputils"
 	"github.com/labring/sealos/pkg/utils/logger"
 )
 
 type registryApplier struct {
+	upgrade password.Upgrade
 }
 
 func (*registryApplier) String() string { return "registry_applier" }
@@ -39,83 +37,37 @@ func (*registryApplier) Filter(ctx Context, host string) bool {
 }
 
 func (a *registryApplier) Apply(ctx Context, host string) error {
-	rc := GetRegistryInfo(ctx.GetExecer(), ctx.GetData().RootFSPath(), ctx.GetCluster().GetRegistryIPAndPort())
-	lnCmd := fmt.Sprintf(constants.DefaultLnFmt, ctx.GetData().RootFSRegistryPath(), rc.Data)
+	if a.upgrade == nil {
+		a.upgrade = password.NewUpgrade(ctx.GetCluster().GetName(), ctx.GetExecer())
+	}
+	rc := helpers.GetRegistryInfo(ctx.GetExecer(), ctx.GetPathResolver().RootFSPath(), ctx.GetCluster().GetRegistryIPAndPort())
+	lnCmd := fmt.Sprintf(constants.DefaultLnFmt, ctx.GetPathResolver().RootFSRegistryPath(), rc.Data)
 	logger.Debug("make soft link: %s", lnCmd)
 	if err := ctx.GetExecer().CmdAsync(host, lnCmd); err != nil {
 		return fmt.Errorf("failed to make link: %v", err)
 	}
-	htpasswdPath, err := a.configLocalHtpasswd(ctx.GetData().EtcPath(), rc)
-	if err != nil {
+	if err := a.upgrade.UpdateRegistryPasswd(rc, "", host, ""); err != nil {
 		return err
 	}
-	if len(htpasswdPath) > 0 {
-		if err = ctx.GetExecer().Copy(host, htpasswdPath, path.Join(ctx.GetData().RootFSEtcPath(), "registry_htpasswd")); err != nil {
-			return err
-		}
-	}
+
 	return ctx.GetExecer().CmdAsync(host, ctx.GetBash().InitRegistryBash(host))
-}
-
-func (a *registryApplier) configLocalHtpasswd(cfgBasedir string, rc *v2.RegistryConfig) (string, error) {
-	if rc.Username == "" || rc.Password == "" {
-		logger.Warn("registry username or password is empty")
-		return "", nil
-	}
-	mk := newHtpasswdMaker(cfgBasedir)
-	return mk.Make(rc.Username, rc.Password)
-}
-
-type htpasswdMaker struct {
-	path string
-	err  error
-	once sync.Once
-}
-
-func (m *htpasswdMaker) Make(u, p string) (string, error) {
-	m.once.Do(func() {
-		if u == "" || p == "" {
-			return
-		}
-		pwd := passwd.Htpasswd(u, p)
-		if err := file.WriteFile(m.path, []byte(pwd)); err != nil {
-			m.err = fmt.Errorf("failed to make htpasswd: %v", err)
-		}
-	})
-	return m.path, m.err
-}
-
-var htpasswdMakers = map[string]*htpasswdMaker{}
-
-func newHtpasswdMaker(root string) *htpasswdMaker {
-	fp := path.Join(root, "registry_htpasswd")
-	if v, ok := htpasswdMakers[fp]; ok {
-		return v
-	}
-	m := &htpasswdMaker{path: fp}
-	htpasswdMakers[fp] = m
-	return m
 }
 
 func (*registryApplier) Undo(ctx Context, host string) error {
 	return ctx.GetExecer().CmdAsync(host, ctx.GetBash().CleanRegistryBash(host))
 }
 
-type registryHostApplier struct {
-}
+type registryHostApplier struct{ common }
 
 func (*registryHostApplier) String() string { return "registry_host_applier" }
-func (*registryHostApplier) Filter(_ Context, _ string) bool {
-	return true
-}
 
 func (*registryHostApplier) Undo(ctx Context, host string) error {
-	rc := GetRegistryInfo(ctx.GetExecer(), ctx.GetData().RootFSPath(), ctx.GetCluster().GetRegistryIPAndPort())
+	rc := helpers.GetRegistryInfo(ctx.GetExecer(), ctx.GetPathResolver().RootFSPath(), ctx.GetCluster().GetRegistryIPAndPort())
 	return ctx.GetRemoter().HostsDelete(host, rc.Domain)
 }
 
 func (a *registryHostApplier) Apply(ctx Context, host string) error {
-	rc := GetRegistryInfo(ctx.GetExecer(), ctx.GetData().RootFSPath(), ctx.GetCluster().GetRegistryIPAndPort())
+	rc := helpers.GetRegistryInfo(ctx.GetExecer(), ctx.GetPathResolver().RootFSPath(), ctx.GetCluster().GetRegistryIPAndPort())
 
 	if err := ctx.GetRemoter().HostsAdd(host, iputils.GetHostIP(rc.IP), rc.Domain); err != nil {
 		return fmt.Errorf("failed to add hosts: %v", err)

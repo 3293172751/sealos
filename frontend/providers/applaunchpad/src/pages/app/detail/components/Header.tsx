@@ -1,6 +1,6 @@
 import React, { Dispatch, useCallback, useState } from 'react';
-import { Box, Flex, Button, useDisclosure } from '@chakra-ui/react';
-import type { AppStatusMapType } from '@/types/app';
+import { Box, Flex, Button, useDisclosure, Center } from '@chakra-ui/react';
+import type { AppStatusMapType, TAppSource } from '@/types/app';
 import { useRouter } from 'next/router';
 import { restartAppByName, pauseAppByName, startAppByName } from '@/api/app';
 import { useToast } from '@/hooks/useToast';
@@ -8,8 +8,9 @@ import { useConfirm } from '@/hooks/useConfirm';
 import { AppStatusEnum, appStatusMap } from '@/constants/app';
 import AppStatusTag from '@/components/AppStatusTag';
 import MyIcon from '@/components/Icon';
-import { EditIcon } from '@chakra-ui/icons';
 import dynamic from 'next/dynamic';
+import { useTranslation } from 'next-i18next';
+import UpdateModal from './UpdateModal';
 
 const DelModal = dynamic(() => import('./DelModal'));
 
@@ -19,7 +20,8 @@ const Header = ({
   isPause = false,
   isLargeScreen = true,
   setShowSlider,
-  refetch
+  refetch,
+  source
 }: {
   appName?: string;
   appStatus?: AppStatusMapType;
@@ -27,7 +29,9 @@ const Header = ({
   isLargeScreen: boolean;
   setShowSlider: Dispatch<boolean>;
   refetch: () => void;
+  source?: TAppSource;
 }) => {
+  const { t } = useTranslation();
   const router = useRouter();
   const { toast } = useToast();
   const {
@@ -35,11 +39,18 @@ const Header = ({
     onOpen: onOpenDelModal,
     onClose: onCloseDelModal
   } = useDisclosure();
+  const {
+    isOpen: isOpenUpdateModal,
+    onOpen: onOpenUpdateModal,
+    onClose: onCloseUpdateModal
+  } = useDisclosure();
+  const [updateAppName, setUpdateAppName] = useState('');
+
   const { openConfirm: openRestartConfirm, ConfirmChild: RestartConfirmChild } = useConfirm({
-    content: '确认重启该应用?'
+    content: 'Confirm to restart this application?'
   });
   const { openConfirm: onOpenPause, ConfirmChild: PauseChild } = useConfirm({
-    content: '请注意，暂停状态下无法变更应用，并且如果您使用了存储卷，存储券仍会收费，请确认！'
+    content: 'pause_message'
   });
 
   const [loading, setLoading] = useState(false);
@@ -49,7 +60,7 @@ const Header = ({
       setLoading(true);
       await restartAppByName(appName);
       toast({
-        title: '重启成功',
+        title: `${t('Restart Success')}`,
         status: 'success'
       });
     } catch (error: any) {
@@ -102,23 +113,23 @@ const Header = ({
 
   return (
     <Flex h={'86px'} alignItems={'center'}>
-      <MyIcon name="arrowLeft" cursor={'pointer'} onClick={router.back} />
-      <Box ml={8} mr={3} fontSize={'3xl'} fontWeight={'bold'}>
+      <Center cursor={'pointer'} onClick={() => router.replace('/apps')}>
+        <MyIcon name="arrowLeft" w={'24px'} />
+      </Center>
+      <Box ml={'4px'} mr={3} fontWeight={'bold'} color={'grayModern.900'} fontSize={'2xl'}>
         {appName}
       </Box>
-      <AppStatusTag status={appStatus} isPause={isPause} />
+      <AppStatusTag status={appStatus} isPause={isPause} showBorder={false} />
       {!isLargeScreen && (
         <Box mx={4}>
           <Button
-            flex={1}
-            h={'40px'}
-            borderColor={'myGray.200'}
-            leftIcon={<MyIcon name="detail" w={'14px'} h={'14px'} transform={'translateY(3px)'} />}
-            variant={'base'}
-            bg={'white'}
+            width={'96px'}
+            height={'40px'}
+            leftIcon={<MyIcon name="detail" w="16px" h="16px" />}
+            variant={'outline'}
             onClick={() => setShowSlider(true)}
           >
-            详情
+            {t('Details')}
           </Button>
         </Box>
       )}
@@ -127,45 +138,49 @@ const Header = ({
       {/* btns */}
       {isPause ? (
         <Button
+          width={'96px'}
+          variant={'outline'}
           mr={5}
           h={'40px'}
-          borderColor={'myGray.200'}
-          leftIcon={<MyIcon name="continue" w={'14px'} />}
+          leftIcon={<MyIcon name="continue" w={'20px'} fill={'#485264'} />}
           isLoading={loading}
-          variant={'base'}
-          bg={'white'}
           onClick={handleStartApp}
         >
-          继续
+          {t('Continue')}
         </Button>
       ) : (
         <Button
+          width={'96px'}
+          variant={'outline'}
           mr={5}
           h={'40px'}
-          borderColor={'myGray.200'}
-          leftIcon={<MyIcon name="pause" w={'14px'} />}
+          leftIcon={<MyIcon name="pause" w={'20px'} fill={'#485264'} />}
           isLoading={loading}
-          variant={'base'}
-          bg={'white'}
           onClick={onOpenPause(handlePauseApp)}
         >
-          暂停
+          {t('Pause')}
         </Button>
       )}
       {!isPause && (
         <Button
+          className="driver-detail-update-button"
+          _focusVisible={{ boxShadow: '' }}
           mr={5}
           h={'40px'}
-          borderColor={'myGray.200'}
-          leftIcon={<MyIcon name={'change'} w={'14px'} />}
+          width={'96px'}
+          variant={'outline'}
+          leftIcon={<MyIcon name={'change'} w={'20px'} fill={'#485264'} />}
           isLoading={loading}
-          variant={'base'}
-          bg={'white'}
           onClick={() => {
-            router.push(`/app/edit?name=${appName}`);
+            if (source?.hasSource && source?.sourceType === 'sealaf') {
+              setUpdateAppName(appName);
+              onOpenUpdateModal();
+            } else {
+              router.push(`/app/edit?name=${appName}`);
+            }
           }}
         >
-          变更
+          {t('Update')}
         </Button>
       )}
 
@@ -173,41 +188,48 @@ const Header = ({
         <Button
           mr={5}
           h={'40px'}
-          borderColor={'myGray.200'}
-          variant={'base'}
-          bg={'white'}
-          leftIcon={<MyIcon name="restart" w={'14px'} h={'14px'} />}
+          width={'96px'}
+          variant={'outline'}
+          leftIcon={<MyIcon name="restart" w={'20px'} fill={'#485264'} />}
           onClick={openRestartConfirm(handleRestartApp)}
           isLoading={loading}
         >
-          重启
+          {t('Restart')}
         </Button>
       )}
       <Button
         h={'40px'}
-        borderColor={'myGray.200'}
-        leftIcon={<MyIcon name="delete" w={'14px'} h={'14px'} />}
-        variant={'base'}
-        bg={'white'}
+        width={'96px'}
+        variant={'outline'}
+        leftIcon={<MyIcon name="delete" w={'20px'} fill={'#485264'} />}
         _hover={{
           color: '#FF324A'
         }}
         isDisabled={loading}
         onClick={onOpenDelModal}
       >
-        删除
+        {t('Delete')}
       </Button>
       <RestartConfirmChild />
       <PauseChild />
       {isOpenDelModal && (
         <DelModal
           appName={appName}
+          source={source}
           onClose={onCloseDelModal}
           onSuccess={() => router.replace('/apps')}
         />
       )}
+      <UpdateModal
+        source={source}
+        isOpen={isOpenUpdateModal}
+        onClose={() => {
+          setUpdateAppName('');
+          onCloseUpdateModal();
+        }}
+      />
     </Flex>
   );
 };
 
-export default Header;
+export default React.memo(Header);

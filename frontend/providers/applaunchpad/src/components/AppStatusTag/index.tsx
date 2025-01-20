@@ -2,25 +2,42 @@ import React, { useMemo } from 'react';
 import { Flex, Box } from '@chakra-ui/react';
 import type { AppStatusMapType } from '@/types/app';
 import { appStatusMap } from '@/constants/app';
+import { useTranslation } from 'next-i18next';
 
-const AppStatusTag = ({ status, isPause }: { status: AppStatusMapType; isPause: boolean }) => {
+const AppStatusTag = ({
+  status,
+  isPause,
+  showBorder = false
+}: {
+  status: AppStatusMapType;
+  isPause: boolean;
+  showBorder: boolean;
+}) => {
+  const { t } = useTranslation();
   const statusMap = useMemo(() => (isPause ? appStatusMap.pause : status), [isPause, status]);
   return (
     <Flex
       color={statusMap.color}
       backgroundColor={statusMap.backgroundColor}
-      py={2}
-      px={3}
+      border={showBorder ? '1px solid' : 'none'}
+      borderColor={statusMap.color}
+      py={'6px'}
+      px={'12px'}
       borderRadius={'24px'}
       fontSize={'xs'}
       fontWeight={'bold'}
       alignItems={'center'}
-      w={'88px'}
+      minW={'68px'}
+      gap={'4px'}
     >
-      <Box w={'10px'} h={'10px'} borderRadius={'10px'} backgroundColor={statusMap.dotColor}></Box>
-      <Box ml={2} flex={1}>
-        {statusMap.label}
-      </Box>
+      <Box
+        flexShrink={'0'}
+        w={'6px'}
+        h={'6px'}
+        borderRadius={'10px'}
+        backgroundColor={statusMap.dotColor}
+      />
+      <Box>{t(statusMap.label)}</Box>
     </Flex>
   );
 };

@@ -1,136 +1,33 @@
+# Copyright © 2023 sealos.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  creationTimestamp: null
   name: manager-role
 rules:
 - apiGroups:
-  - certificates.k8s.io
+  - '*'
   resources:
-  - certificatesigningrequests
+  - '*'
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+  - '*'
 - apiGroups:
-  - certificates.k8s.io
+  - user.sealos.io
   resources:
-  - certificatesigningrequests/approval
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - certificates.k8s.io
-  resources:
-  - certificatesigningrequests/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - certificates.k8s.io
-  resourceNames:
-  - kubernetes.io/kube-apiserver-client
-  resources:
-  - signers
-  verbs:
-  - approve
-- apiGroups:
-  - ""
-  resources:
-  - namespaces
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - secrets/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - secrets/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - serviceaccounts
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - serviceaccounts/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - clusterrolebindings
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - clusterroles
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - rolebindings
+  - deleterequests
   verbs:
   - create
   - delete
@@ -142,7 +39,21 @@ rules:
 - apiGroups:
   - user.sealos.io
   resources:
-  - usergroupbindings
+  - deleterequests/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - user.sealos.io
+  resources:
+  - deleterequests/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - user.sealos.io
+  resources:
+  - operationrequests
   verbs:
   - create
   - delete
@@ -154,65 +65,13 @@ rules:
 - apiGroups:
   - user.sealos.io
   resources:
-  - usergroupbindings/finalizers
+  - operationrequests/finalizers
   verbs:
   - update
 - apiGroups:
   - user.sealos.io
   resources:
-  - usergroupbindings/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - usergroups
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - usergroups/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - usergroups/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - users
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - users/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - users/status
+  - operationrequests/status
   verbs:
   - get
   - patch

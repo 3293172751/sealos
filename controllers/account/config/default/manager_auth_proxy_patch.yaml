@@ -1,3 +1,17 @@
+# Copyright © 2023 sealos.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # This patch inject a sidecar container which is a HTTP proxy for the
 # controller manager, it performs RBAC authorization against the Kubernetes API using SubjectAccessReviews.
 apiVersion: apps/v1
@@ -33,25 +47,41 @@ spec:
             memory: 64Mi
       - name: manager
         envFrom:
-          - configMapRef:
-              name: account-manager-configmap
           - secretRef:
               name: payment-secret
+              optional: true
+          - configMapRef:
+              name: account-manager-env
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
         env:
           - name: ACCOUNT_NAMESPACE
-            value: "sealos-system"
+            value: sealos-system
           - name: NAMESPACE_NAME
-            value: "user-system"
-          - name: NEW_ACCOUNT_AMOUNT
-            value: "50000"
+            value: user-system
           - name: WHITELIST
-            value: "terminals.Terminal.terminal.sealos.io/v1,payments.Payment.account.sealos.io/v1"
+            value: licenses.License.license.sealos.io/v1,notifications.Notification.notification.sealos.io/v1,payments.Payment.account.sealos.io/v1,billingrecordqueries.BillingRecordQuery.account.sealos.io/v1,billinginfoqueries.BillingInfoQuery.account.sealos.io/v1,pricequeries.PriceQuery.account.sealos.io/v1
           - name: ACCOUNT_SYSTEM_NAMESPACE
             valueFrom:
               fieldRef:
                 apiVersion: v1
                 fieldPath: metadata.namespace
+        image: ghcr.io/labring/sealos-account-controller:latest
+        imagePullPolicy: Always
         args:
         - "--health-probe-bind-address=:8081"
         - "--metrics-bind-address=127.0.0.1:8080"
         - "--leader-elect"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: "control-plane"
+                      operator: In
+                      values:
+                        - controller-manager
+                topologyKey: "kubernetes.io/hostname"

@@ -16,8 +16,7 @@ package ssh
 
 import (
 	"context"
-	"net"
-	"sync"
+	"time"
 
 	"github.com/spf13/pflag"
 	"golang.org/x/crypto/ssh"
@@ -25,14 +24,24 @@ import (
 
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	fileutils "github.com/labring/sealos/pkg/utils/file"
-	"github.com/labring/sealos/pkg/utils/iputils"
 	"github.com/labring/sealos/pkg/utils/logger"
 )
 
-var defaultMaxRetry = 5
+var (
+	defaultMaxRetry         = 5
+	defaultExecutionTimeout = 300 * time.Second
+)
 
 func RegisterFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&defaultMaxRetry, "max-retry", defaultMaxRetry, "define max num of ssh retry times")
+	fs.DurationVar(&defaultExecutionTimeout, "execution-timeout", defaultExecutionTimeout, "timeout setting of command execution")
+}
+
+// GetTimeoutContext create a context.Context with default timeout
+// default execution timeout in sealos is just fine, if you want to customize the timeout setting,
+// you must invoke the `RegisterFlags` function above.
+func GetTimeoutContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), defaultExecutionTimeout)
 }
 
 type Interface interface {
@@ -45,27 +54,12 @@ type Interface interface {
 	Fetch(host, src, dst string) error
 	// CmdAsync exec commands on remote host asynchronously
 	CmdAsync(host string, cmds ...string) error
+	CmdAsyncWithContext(ctx context.Context, host string, cmds ...string) error
 	// Cmd exec command on remote host, and return combined standard output and standard error
 	Cmd(host, cmd string) ([]byte, error)
 	// CmdToString exec command on remote host, and return spilt standard output by separator and standard error
 	CmdToString(host, cmd, spilt string) (string, error)
 	Ping(host string) error
-}
-
-var (
-	getAddressesOnce sync.Once
-	localAddresses   *[]net.Addr
-)
-
-func getLocalAddresses() *[]net.Addr {
-	getAddressesOnce.Do(func() {
-		var err error
-		localAddresses, err = iputils.ListLocalHostAddrs()
-		if err != nil {
-			logger.Warn("failed to list local addresses: %v", err)
-		}
-	})
-	return localAddresses
 }
 
 type Client struct {
@@ -144,6 +138,10 @@ func newOptionFromSSH(ssh *v2.SSH, isStdout bool) *Option {
 	if len(ssh.PkData) > 0 {
 		opts = append(opts, WithRawPrivateKeyDataAndPhrase(ssh.PkData, ssh.PkPasswd))
 	}
+	if ssh.User != "" && ssh.User != defaultUsername {
+		opts = append(opts, WithSudoEnable(true))
+	}
+
 	opt := NewOption()
 	for i := range opts {
 		opts[i](opt)
@@ -155,7 +153,7 @@ func newFromSSH(ssh *v2.SSH, isStdout bool) (Interface, error) {
 	return New(newOptionFromSSH(ssh, isStdout))
 }
 
-func NewSSHClient(ssh *v2.SSH, isStdout bool) Interface {
+func MustNewClient(ssh *v2.SSH, isStdout bool) Interface {
 	client, err := newFromSSH(ssh, isStdout)
 	if err != nil {
 		logger.Fatal("failed to create ssh client: %v", err)
@@ -163,19 +161,17 @@ func NewSSHClient(ssh *v2.SSH, isStdout bool) Interface {
 	return client
 }
 
-func NewSSHByCluster(cluster *v2.Cluster, isStdout bool) (Interface, error) {
+func NewCacheClientFromCluster(cluster *v2.Cluster, isStdout bool) Interface {
 	cc := &clusterClient{
 		cluster:  cluster,
 		isStdout: isStdout,
 		configs:  make(map[string]*Option),
 		cache:    make(map[*Option]Interface),
 	}
-	var ipList []string
-	ipList = append(ipList, append(cluster.GetIPSByRole(v2.MASTER), cluster.GetIPSByRole(v2.NODE)...)...)
-	return cc, WaitSSHReady(cc, defaultMaxRetry, ipList...)
+	return cc
 }
 
-func WaitSSHReady(client Interface, _ int, hosts ...string) error {
+func WaitReady(client Interface, _ int, hosts ...string) error {
 	eg, _ := errgroup.WithContext(context.Background())
 	for i := range hosts {
 		host := hosts[i]
